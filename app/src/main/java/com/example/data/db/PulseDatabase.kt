@@ -146,15 +146,69 @@ interface CallDao {
     suspend fun deleteFakeCalls()
 }
 
+@Dao
+interface ChannelDao {
+    @Query("SELECT * FROM channels ORDER BY lastMessageTimestamp DESC")
+    fun getAllChannels(): Flow<List<ChannelEntity>>
+
+    @Query("SELECT * FROM channels WHERE id = :channelId LIMIT 1")
+    suspend fun getChannelById(channelId: String): ChannelEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertChannel(channel: ChannelEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertChannels(channels: List<ChannelEntity>)
+
+    @Query("UPDATE channels SET isFollowedByMe = :followed, followerCount = followerCount + :countChange WHERE id = :channelId")
+    suspend fun updateFollowState(channelId: String, followed: Boolean, countChange: Int)
+
+    @Query("UPDATE channels SET lastMessageText = :text, lastMessageTimestamp = :timestamp WHERE id = :channelId")
+    suspend fun updateLastMessage(channelId: String, text: String, timestamp: Long)
+
+    @Query("DELETE FROM channels WHERE id = :channelId")
+    suspend fun deleteChannel(channelId: String)
+}
+
+@Dao
+interface ChannelMessageDao {
+    @Query("SELECT * FROM channel_messages WHERE channelId = :channelId ORDER BY timestamp ASC")
+    fun getMessagesForChannel(channelId: String): Flow<List<ChannelMessageEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMessage(message: ChannelMessageEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMessages(messages: List<ChannelMessageEntity>)
+}
+
+@Dao
+interface PostDao {
+    @Query("SELECT * FROM posts ORDER BY timestamp DESC")
+    fun getAllPosts(): Flow<List<PostEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPost(post: PostEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPosts(posts: List<PostEntity>)
+
+    @Query("UPDATE posts SET isLikedByMe = :liked, likesCount = likesCount + :countChange WHERE id = :postId")
+    suspend fun updateLikeState(postId: String, liked: Boolean, countChange: Int)
+}
+
 @Database(
     entities = [
         UserEntity::class,
         ChatEntity::class,
         MessageEntity::class,
         StatusStoryEntity::class,
-        CallLogEntity::class
+        CallLogEntity::class,
+        ChannelEntity::class,
+        ChannelMessageEntity::class,
+        PostEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class PulseDatabase : RoomDatabase() {
@@ -163,6 +217,9 @@ abstract class PulseDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun statusDao(): StatusDao
     abstract fun callDao(): CallDao
+    abstract fun channelDao(): ChannelDao
+    abstract fun channelMessageDao(): ChannelMessageDao
+    abstract fun postDao(): PostDao
 
     companion object {
         @Volatile

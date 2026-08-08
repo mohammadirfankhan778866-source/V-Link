@@ -102,6 +102,51 @@ data class CallLogEntity(
     val durationSeconds: Int = 0
 )
 
+@Entity(tableName = "channels")
+data class ChannelEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val description: String,
+    val creatorId: String,
+    val creatorName: String,
+    val avatarUrl: String,
+    val followerCount: Int = 0,
+    val isFollowedByMe: Boolean = false,
+    val lastMessageText: String = "",
+    val lastMessageTimestamp: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "channel_messages")
+data class ChannelMessageEntity(
+    @PrimaryKey val id: String,
+    val channelId: String,
+    val senderId: String,
+    val senderName: String,
+    val senderAvatar: String = "",
+    val content: String,
+    val timestamp: Long = System.currentTimeMillis(),
+    val mediaUrl: String = "",
+    val fileName: String = "",
+    val fileSize: String = "",
+    val mediaType: String = "TEXT" // TEXT, IMAGE, VIDEO, DOCUMENT
+)
+
+@Entity(tableName = "posts")
+data class PostEntity(
+    @PrimaryKey val id: String,
+    val userId: String,
+    val userName: String,
+    val userAvatar: String,
+    val content: String,
+    val mediaUrl: String = "",
+    val mediaType: String = "TEXT", // TEXT, IMAGE, VIDEO, DOCUMENT
+    val timestamp: Long = System.currentTimeMillis(),
+    val likesCount: Int = 0,
+    val isLikedByMe: Boolean = false,
+    val fileExtension: String = "",
+    val fileSize: String = ""
+)
+
 data class AdminAnalytics(
     val totalUsers: Int = 142850,
     val activeWebSocketConnections: Int = 89410,

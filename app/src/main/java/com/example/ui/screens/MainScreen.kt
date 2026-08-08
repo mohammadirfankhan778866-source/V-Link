@@ -62,6 +62,12 @@ fun MainScreen(viewModel: MainViewModel) {
                             unselectedIcon = Icons.Outlined.DonutLarge
                         ),
                         NavigationTabItemData(
+                            tab = NavigationTab.POSTS,
+                            label = "Posts",
+                            selectedIcon = Icons.Default.RssFeed,
+                            unselectedIcon = Icons.Outlined.RssFeed
+                        ),
+                        NavigationTabItemData(
                             tab = NavigationTab.CALLS,
                             label = "Calls",
                             selectedIcon = Icons.Default.Call,
@@ -88,6 +94,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         onOpenNewChatModal = { showNewChatModal = true }
                     )
                     NavigationTab.UPDATES -> StatusScreen(viewModel = viewModel)
+                    NavigationTab.POSTS -> PostsScreen(viewModel = viewModel)
                     NavigationTab.CALLS -> CallsScreen(viewModel = viewModel)
                     NavigationTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
                 }

@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 
 enum class NavigationTab {
-    CHATS, UPDATES, CALLS, SETTINGS
+    CHATS, UPDATES, POSTS, CALLS, SETTINGS
 }
 
 data class TempGoogleUser(
@@ -115,6 +115,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val starredMessages = repository.starredMessages.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
     )
+
+    val channels = repository.allChannels.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
+    )
+
+    val posts = repository.allPosts.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
+    )
+
+    fun getMessagesForChannel(channelId: String): Flow<List<ChannelMessageEntity>> {
+        return repository.getMessagesForChannel(channelId)
+    }
+
+    fun createChannel(name: String, description: String, avatarUrl: String) {
+        viewModelScope.launch {
+            val user = currentUser.value
+            val creatorId = user?.id ?: "usr_google_irfan_9075"
+            val creatorName = user?.displayName ?: "Mohammad Irfan Khan"
+            repository.createChannel(name, description, creatorId, creatorName, avatarUrl)
+        }
+    }
+
+    fun toggleFollowChannel(channel: ChannelEntity) {
+        viewModelScope.launch {
+            repository.toggleFollowChannel(channel.id, channel.isFollowedByMe)
+        }
+    }
+
+    fun sendChannelMessage(channelId: String, content: String, mediaUrl: String = "", mediaType: String = "TEXT", fileName: String = "", fileSize: String = "") {
+        viewModelScope.launch {
+            val user = currentUser.value
+            val senderId = user?.id ?: "usr_google_irfan_9075"
+            val senderName = user?.displayName ?: "Mohammad Irfan Khan"
+            val senderAvatar = user?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300"
+            repository.sendChannelMessage(channelId, senderId, senderName, senderAvatar, content, mediaUrl, mediaType, fileName, fileSize)
+        }
+    }
+
+    fun createPost(content: String, mediaUrl: String = "", mediaType: String = "TEXT", fileExtension: String = "", fileSize: String = "") {
+        viewModelScope.launch {
+            val user = currentUser.value
+            val userId = user?.id ?: "usr_google_irfan_9075"
+            val userName = user?.displayName ?: "Mohammad Irfan Khan"
+            val userAvatar = user?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300"
+            repository.createPost(userId, userName, userAvatar, content, mediaUrl, mediaType, fileExtension, fileSize)
+        }
+    }
+
+    fun toggleLikePost(post: PostEntity) {
+        viewModelScope.launch {
+            repository.toggleLikePost(post.id, post.isLikedByMe)
+        }
+    }
 
     init {
         // Collect incoming call signals from WebSocket service
