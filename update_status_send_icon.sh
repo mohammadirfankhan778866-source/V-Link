@@ -1,0 +1,1 @@
+sed -i 's/import androidx.compose.material.icons.filled.Close/import androidx.compose.material.icons.filled.Close\nimport androidx.compose.material.icons.automirrored.filled.Send/' app/src/main/java/com/example/ui/screens/StatusScreen.kt

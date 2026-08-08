@@ -1,0 +1,229 @@
+package com.example.data.repository
+
+import com.example.data.db.PulseDatabase
+import com.example.data.models.*
+import com.example.data.network.PulseWebSocketService
+import kotlinx.coroutines.flow.Flow
+import java.util.UUID
+
+data class ReactionItem(
+    val userId: String,
+    val emoji: String,
+    val userName: String
+)
+
+class ChatRepository(
+    val database: PulseDatabase,
+    val webSocketService: PulseWebSocketService
+) {
+    val allChats: Flow<List<ChatEntity>> = database.chatDao().getAllChats()
+    val allContacts: Flow<List<UserEntity>> = database.userDao().getAllContacts()
+    val currentUser: Flow<UserEntity?> = database.userDao().getCurrentUser()
+    val allStatuses: Flow<List<StatusStoryEntity>> = database.statusDao().getAllStatuses()
+    val allCalls: Flow<List<CallLogEntity>> = database.callDao().getAllCalls()
+    val starredMessages: Flow<List<MessageEntity>> = database.messageDao().getStarredMessages()
+
+    fun getMessagesForChat(chatId: String): Flow<List<MessageEntity>> {
+        return database.messageDao().getMessagesForChat(chatId)
+    }
+
+    fun getChatById(chatId: String): Flow<ChatEntity?> {
+        return database.chatDao().getChatById(chatId)
+    }
+
+    fun searchMessages(query: String): Flow<List<MessageEntity>> {
+        return database.messageDao().searchMessages(query)
+    }
+
+    suspend fun sendMessage(
+        chatId: String,
+        content: String,
+        type: MessageType = MessageType.TEXT,
+        mediaUrl: String = "",
+        replyToId: String? = null,
+        replyToName: String? = null,
+        replyToContent: String? = null
+    ) {
+        webSocketService.sendMessage(
+            chatId = chatId,
+            content = content,
+            type = type,
+            mediaUrl = mediaUrl,
+            replyToId = replyToId,
+            replyToName = replyToName,
+            replyToContent = replyToContent
+        )
+    }
+
+    suspend fun togglePinChat(chatId: String, isPinned: Boolean) {
+        database.chatDao().updatePinned(chatId, isPinned)
+    }
+
+    suspend fun toggleArchiveChat(chatId: String, isArchived: Boolean) {
+        database.chatDao().updateArchived(chatId, isArchived)
+    }
+
+    suspend fun updateWallpaper(chatId: String, wallpaper: String) {
+        database.chatDao().updateWallpaper(chatId, wallpaper)
+    }
+
+    suspend fun toggleStarMessage(messageId: String, isStarred: Boolean) {
+        database.messageDao().updateStarred(messageId, isStarred)
+    }
+
+    suspend fun addReaction(messageId: String, reaction: String) {
+        val currentUser = database.userDao().getCurrentUserOnce() ?: return
+        val msg = database.messageDao().getMessageById(messageId) ?: return
+        
+        val currentReactionsStr = msg.reactions
+        val reactionList = if (currentReactionsStr.isBlank()) {
+            mutableListOf()
+        } else {
+            currentReactionsStr.split(",").mapNotNull { part ->
+                val subParts = part.split(":")
+                if (subParts.size >= 2) {
+                    val rUserId = subParts[0]
+                    val rEmoji = subParts[1]
+                    val userName = if (subParts.size >= 3) subParts.drop(2).joinToString(":") else "User"
+                    ReactionItem(rUserId, rEmoji, userName)
+                } else null
+            }.toMutableList()
+        }
+
+        // Check if current user already has a reaction
+        val existingIndex = reactionList.indexOfFirst { it.userId == currentUser.id }
+        if (existingIndex >= 0) {
+            val existing = reactionList[existingIndex]
+            if (existing.emoji == reaction) {
+                // If the same emoji is clicked, remove it!
+                reactionList.removeAt(existingIndex)
+            } else {
+                // If a different emoji is clicked, update/replace it!
+                reactionList[existingIndex] = existing.copy(emoji = reaction)
+            }
+        } else {
+            // New reaction!
+            reactionList.add(ReactionItem(currentUser.id, reaction, currentUser.displayName))
+        }
+
+        val newReactionsStr = reactionList.joinToString(",") { "${it.userId}:${it.emoji}:${it.userName}" }
+        database.messageDao().updateReactions(messageId, newReactionsStr)
+    }
+
+    suspend fun removeUserReaction(messageId: String, userId: String) {
+        val msg = database.messageDao().getMessageById(messageId) ?: return
+        val currentReactionsStr = msg.reactions
+        if (currentReactionsStr.isBlank()) return
+        
+        val reactionList = currentReactionsStr.split(",").mapNotNull { part ->
+            val subParts = part.split(":")
+            if (subParts.size >= 2) {
+                val rUserId = subParts[0]
+                val rEmoji = subParts[1]
+                val userName = if (subParts.size >= 3) subParts.drop(2).joinToString(":") else "User"
+                ReactionItem(rUserId, rEmoji, userName)
+            } else null
+        }.filter { it.userId != userId }
+
+        val newReactionsStr = reactionList.joinToString(",") { "${it.userId}:${it.emoji}:${it.userName}" }
+        database.messageDao().updateReactions(messageId, newReactionsStr)
+    }
+
+    suspend fun deleteForMe(messageId: String) {
+        database.messageDao().deleteForMe(messageId)
+    }
+
+    suspend fun clearChatMessages(chatId: String) {
+        database.messageDao().clearChatMessages(chatId)
+    }
+
+    suspend fun deleteForEveryone(messageId: String) {
+        database.messageDao().deleteForEveryone(messageId)
+    }
+
+    suspend fun createGroupChat(title: String, participantIds: List<String>): String {
+        val chatId = "chat_group_" + UUID.randomUUID().toString().take(6)
+        val newChat = ChatEntity(
+            id = chatId,
+            title = title,
+            isGroup = true,
+            avatarUrl = "https://picsum.photos/seed/$title/300/300",
+            lastMessageText = "Group created by you",
+            lastMessageTimestamp = System.currentTimeMillis(),
+            memberCount = participantIds.size + 1
+        )
+        database.chatDao().insertOrUpdateChat(newChat)
+
+        val sysMessage = MessageEntity(
+            id = "msg_sys_" + UUID.randomUUID().toString().take(6),
+            chatId = chatId,
+            senderId = "system",
+            senderName = "System",
+            content = "You created group \"$title\"",
+            timestamp = System.currentTimeMillis(),
+            status = MessageStatus.READ.name,
+            type = MessageType.TEXT.name
+        )
+        database.messageDao().insertMessage(sysMessage)
+        return chatId
+    }
+
+    suspend fun postStatusStory(mediaUrl: String, caption: String) {
+        val status = StatusStoryEntity(
+            id = "status_" + UUID.randomUUID().toString().take(6),
+            userId = "usr_google_irfan_9075",
+            userName = "My Status",
+            userAvatar = "https://picsum.photos/seed/irfan/300/300",
+            mediaUrl = mediaUrl,
+            caption = caption,
+            timestamp = System.currentTimeMillis(),
+            isViewed = true,
+            isMine = true
+        )
+        database.statusDao().insertStatus(status)
+    }
+
+    suspend fun addCallLog(contactName: String, contactAvatar: String, callType: CallType, isIncoming: Boolean, isMissed: Boolean, duration: Int, contactUsername: String = "") {
+        val call = CallLogEntity(
+            id = "call_" + UUID.randomUUID().toString().take(6),
+            contactId = "usr_contact_" + contactName.lowercase().take(4),
+            contactName = contactName,
+            contactUsername = contactUsername,
+            contactAvatar = contactAvatar,
+            callType = callType.name,
+            isIncoming = isIncoming,
+            isMissed = isMissed,
+            timestamp = System.currentTimeMillis(),
+            durationSeconds = duration
+        )
+        database.callDao().insertCallLog(call)
+    }
+
+    suspend fun markStatusViewed(statusId: String) {
+        database.statusDao().markStatusViewed(statusId)
+    }
+
+    suspend fun populateSeedDataIfEmpty() {
+        // Remove any fake seed data if present in DB
+        database.userDao().deleteFakeUsers()
+        database.chatDao().deleteFakeChats()
+        database.messageDao().deleteFakeMessages()
+        database.statusDao().deleteFakeStatuses()
+        database.callDao().deleteFakeCalls()
+
+        // Ensure Current User exists
+        if (database.userDao().getCurrentUserOnce() == null) {
+            val currentUser = UserEntity(
+                id = "usr_google_irfan_9075",
+                displayName = "Mohammad Irfan Khan",
+                username = "@irfankhan",
+                email = "mohammadirfankhan778866@gmail.com",
+                profilePictureUrl = "https://picsum.photos/seed/irfan/300/300",
+                bio = "Building high-performance Android systems ⚡",
+                onlineStatus = "ONLINE",
+                isCurrentUser = true
+            )
+            database.userDao().insertOrUpdateUser(currentUser)
+        }
+    }
+}

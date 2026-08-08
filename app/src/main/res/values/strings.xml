@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">V-Link</string>
+    <!-- Replace this with your actual Web Client ID from Firebase/Google Cloud -->
+    <string name="default_web_client_id">303440318642-bdprd7ggohirjtsf3rf4am36mfo3v3pm.apps.googleusercontent.com</string>
+</resources>

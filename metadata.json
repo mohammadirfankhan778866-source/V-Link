@@ -1,0 +1,6 @@
+{
+  "name": "V-Link",
+  "description": "V-Link — Next-gen secure ultra-fast messaging app with instant chats, encrypted calls, dynamic status stories, and real-time syncing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
