@@ -169,6 +169,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var channelSimulationJob: kotlinx.coroutines.Job? = null
+
+    private fun startSimulatedChannelPosts() {
+        channelSimulationJob?.cancel()
+        channelSimulationJob = viewModelScope.launch(Dispatchers.Default) {
+            // Wait 25 seconds after app startup before the first simulated post
+            kotlinx.coroutines.delay(25000)
+            
+            val simulationMessages = listOf(
+                "New OTP cluster node has been dynamically added to our Frankfurt zone! Latency is down to 4ms. ⚡" to "channel_erlang_otp",
+                "Design tip: Ensure interactive elements are at least 48dp x 48dp for accessibility. 📱" to "channel_design_patterns",
+                "Pulse Messenger version 2.4-alpha is now rolling out. Check out the brand new adaptive launcher icon! 🚀" to "channel_pulse_news",
+                "Just launched a new server instance with zero downtime! BEAM scheduling is incredible. 🌐" to "channel_erlang_otp",
+                "Remember to use Material Theme 3 colors to maintain proper light/dark contrast! 🎨" to "channel_design_patterns"
+            )
+            
+            var index = 0
+            while (coroutineContext[kotlinx.coroutines.Job]?.isActive == true) {
+                val (content, channelId) = simulationMessages[index]
+                
+                // Only post and notify if the user is following this channel!
+                val currentChannels = channels.value
+                val channel = currentChannels.find { it.id == channelId }
+                if (channel != null && channel.isFollowedByMe) {
+                    val msgId = "chan_sim_msg_" + java.util.UUID.randomUUID().toString().take(6)
+                    val timestamp = System.currentTimeMillis()
+                    
+                    val simMsg = ChannelMessageEntity(
+                        id = msgId,
+                        channelId = channelId,
+                        senderId = "usr_system",
+                        senderName = channel.creatorName,
+                        content = content,
+                        timestamp = timestamp,
+                        mediaType = "TEXT"
+                    )
+                    
+                    // Insert the message to the database
+                    repository.database.channelMessageDao().insertMessage(simMsg)
+                    
+                    // Update channel last message
+                    repository.database.channelDao().updateLastMessage(channelId, content, timestamp)
+                    
+                    // Trigger native notification!
+                    com.example.util.NotificationHelper.showNotification(
+                        context = app,
+                        title = "${channel.name} (${channel.creatorName})",
+                        message = content,
+                        channelId = com.example.PulseApplication.CHANNEL_MESSAGES
+                    )
+                }
+                
+                index = (index + 1) % simulationMessages.size
+                // Wait another 45 seconds before the next simulated channel update
+                kotlinx.coroutines.delay(45000)
+            }
+        }
+    }
+
     init {
         // Collect incoming call signals from WebSocket service
         viewModelScope.launch {
@@ -179,6 +238,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        // Start simulation of posts by followed channels
+        startSimulatedChannelPosts()
     }
 
     fun selectTab(tab: NavigationTab) {

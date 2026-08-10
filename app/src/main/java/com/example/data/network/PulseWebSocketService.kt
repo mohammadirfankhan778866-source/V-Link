@@ -112,6 +112,14 @@ class PulseWebSocketService(private val database: PulseDatabase) {
 
             database.messageDao().insertMessage(replyMsg)
 
+            // Trigger heads-up notification for incoming message
+            com.example.util.NotificationHelper.showNotification(
+                context = com.example.PulseApplication.instance,
+                title = contactName,
+                message = responseText,
+                channelId = com.example.PulseApplication.CHANNEL_MESSAGES
+            )
+
             // Update chat last message & timestamp
             database.chatDao().getChatByIdOnce(chatId)?.let { chat ->
                 val updatedChat = chat.copy(
