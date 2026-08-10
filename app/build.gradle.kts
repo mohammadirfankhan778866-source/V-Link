@@ -80,11 +80,13 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      val customReleaseConfig = signingConfigs.getByName("release")
+      val customDebugConfig = signingConfigs.getByName("debugConfig")
+      signingConfig = if (customReleaseConfig.storeFile?.exists() == true) customReleaseConfig else customDebugConfig
     }
     debug { 
       val customDebugConfig = signingConfigs.getByName("debugConfig")
-      signingConfig = if (customDebugConfig.storeFile?.exists() == true) customDebugConfig else signingConfigs.getByName("debug")
+      signingConfig = customDebugConfig
     }
   }
   compileOptions {

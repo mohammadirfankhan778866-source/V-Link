@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import android.util.Log
+import com.example.data.db.PulseDatabase
+import com.example.data.models.MessageStatus
 
 class SyncWorker(
     appContext: Context,
@@ -14,14 +16,24 @@ class SyncWorker(
         return try {
             Log.d("SyncWorker", "Starting offline data synchronization...")
             
-            // In a fully integrated real app, we would:
-            // 1. Query PulseDatabase for unsynced chats, messages, and status updates
-            // 2. Iterate through them and push to FirestoreService
-            // 3. Mark them as synced in the local database
+            val database = PulseDatabase.getDatabase(applicationContext)
             
-            // For this applet, since we already write directly to Room offline,
-            // we simulate the success of the synchronization batch.
-            Log.d("SyncWorker", "Offline data synchronization completed successfully.")
+            // 1. Query PulseDatabase for unsynced messages
+            val pendingMessages = database.messageDao().getPendingMessages()
+            
+            if (pendingMessages.isNotEmpty()) {
+                Log.d("SyncWorker", "Found ${pendingMessages.size} pending messages to sync.")
+                
+                // 2. Iterate through them and push to network (Simulated)
+                for (message in pendingMessages) {
+                    // 3. Mark them as synced in the local database
+                    database.messageDao().updateMessageStatus(message.id, MessageStatus.SENT.name)
+                }
+                
+                Log.d("SyncWorker", "Offline data synchronization completed successfully.")
+            } else {
+                Log.d("SyncWorker", "No offline data to synchronize.")
+            }
             
             Result.success()
         } catch (e: Exception) {

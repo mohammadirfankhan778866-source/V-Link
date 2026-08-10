@@ -82,6 +82,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE id = :messageId LIMIT 1")
     suspend fun getMessageById(messageId: String): MessageEntity?
 
+    @Query("SELECT * FROM messages WHERE status = 'PENDING'")
+    suspend fun getPendingMessages(): List<MessageEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: MessageEntity)
 
