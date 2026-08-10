@@ -54,6 +54,7 @@ fun PostsScreen(viewModel: MainViewModel) {
     var attachedMediaType by remember { mutableStateOf("TEXT") }
     var attachedFileName by remember { mutableStateOf("") }
     var attachedFileSize by remember { mutableStateOf("") }
+    var postChannelNameInput by remember { mutableStateOf("") }
 
     val context = LocalContext.current
 
@@ -336,6 +337,29 @@ fun PostsScreen(viewModel: MainViewModel) {
                                     Icon(Icons.Default.Close, contentDescription = "Remove file", tint = Color.White, modifier = Modifier.size(16.dp))
                                 }
                             }
+                            
+                            Spacer(modifier = Modifier.height(6.dp))
+                            // Mandatory Channel Name input
+                            Text(
+                                "Channel Name Required *",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color.Red
+                            )
+                            Text(
+                                "To upload photos, videos, or files on your account, please specify a Channel name to sync with your account.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = postChannelNameInput,
+                                onValueChange = { postChannelNameInput = it },
+                                label = { Text("Channel Name") },
+                                placeholder = { Text("e.g. My Tech Hub") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
                         }
 
                         // Attach options
@@ -515,7 +539,9 @@ fun PostsScreen(viewModel: MainViewModel) {
                     }
                 },
                 confirmButton = {
+                    val isEnabled = if (attachedFileUrl.isNotEmpty()) postChannelNameInput.isNotBlank() else (postTextInput.isNotBlank() || attachedFileUrl.isNotEmpty())
                     Button(
+                        enabled = isEnabled,
                         onClick = {
                             if (postTextInput.isNotBlank() || attachedFileUrl.isNotEmpty()) {
                                 viewModel.createPost(
@@ -525,12 +551,26 @@ fun PostsScreen(viewModel: MainViewModel) {
                                     fileExtension = if (attachedMediaType == "DOCUMENT") "pdf" else if (attachedMediaType == "VIDEO") "mp4" else if (attachedMediaType == "GAME") "game" else "jpg",
                                     fileSize = attachedFileSize
                                 )
+                                
+                                // Automatically sync upload to user's specified channel
+                                if (attachedFileUrl.isNotEmpty() && postChannelNameInput.isNotBlank()) {
+                                    viewModel.getOrCreateChannelAndPost(
+                                        channelName = postChannelNameInput,
+                                        content = postTextInput.takeIf { it.isNotBlank() } ?: "Shared a media upload",
+                                        mediaUrl = attachedFileUrl,
+                                        mediaType = attachedMediaType,
+                                        fileName = attachedFileName,
+                                        fileSize = attachedFileSize
+                                    )
+                                }
+                                
                                 showCreatePostModal = false
                                 postTextInput = ""
                                 attachedFileUrl = ""
                                 attachedMediaType = "TEXT"
                                 attachedFileName = ""
                                 attachedFileSize = ""
+                                postChannelNameInput = ""
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
@@ -547,6 +587,7 @@ fun PostsScreen(viewModel: MainViewModel) {
                             attachedMediaType = "TEXT"
                             attachedFileName = ""
                             attachedFileSize = ""
+                            postChannelNameInput = ""
                         }
                     ) {
                         Text("Cancel")

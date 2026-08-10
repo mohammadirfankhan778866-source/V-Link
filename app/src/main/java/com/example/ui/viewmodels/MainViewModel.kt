@@ -133,7 +133,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val user = currentUser.value
             val creatorId = user?.id ?: "usr_google_irfan_9075"
             val creatorName = user?.displayName ?: "Mohammad Irfan Khan"
-            repository.createChannel(name, description, creatorId, creatorName, avatarUrl)
+            val finalAvatar = user?.profilePictureUrl?.takeIf { it.isNotBlank() } ?: avatarUrl
+            repository.createChannel(name, description, creatorId, creatorName, finalAvatar)
         }
     }
 
@@ -150,6 +151,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val senderName = user?.displayName ?: "Mohammad Irfan Khan"
             val senderAvatar = user?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300"
             repository.sendChannelMessage(channelId, senderId, senderName, senderAvatar, content, mediaUrl, mediaType, fileName, fileSize)
+        }
+    }
+
+    fun getOrCreateChannelAndPost(
+        channelName: String,
+        content: String,
+        mediaUrl: String,
+        mediaType: String,
+        fileName: String = "",
+        fileSize: String = ""
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val user = currentUser.value
+            val creatorId = user?.id ?: "usr_google_irfan_9075"
+            val creatorName = user?.displayName ?: "Mohammad Irfan Khan"
+            val finalAvatar = user?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300"
+            
+            val existingChannels = repository.database.channelDao().getAllChannelsOnce()
+            val existingChannel = existingChannels.find { it.name.equals(channelName.trim(), ignoreCase = true) && it.creatorId == creatorId }
+            
+            val channelId = if (existingChannel != null) {
+                existingChannel.id
+            } else {
+                val newChannelId = "chan_" + java.util.UUID.randomUUID().toString().take(8)
+                val newChannel = ChannelEntity(
+                    id = newChannelId,
+                    name = channelName.trim(),
+                    description = "Official channel for $channelName uploads.",
+                    creatorId = creatorId,
+                    creatorName = creatorName,
+                    avatarUrl = finalAvatar,
+                    isFollowedByMe = true,
+                    followerCount = 1,
+                    lastMessageText = content.takeIf { it.isNotBlank() } ?: "Media shared",
+                    lastMessageTimestamp = System.currentTimeMillis()
+                )
+                repository.database.channelDao().insertChannel(newChannel)
+                newChannelId
+            }
+            
+            repository.sendChannelMessage(
+                channelId = channelId,
+                senderId = creatorId,
+                senderName = creatorName,
+                senderAvatar = finalAvatar,
+                content = content,
+                mediaUrl = mediaUrl,
+                mediaType = mediaType,
+                fileName = fileName,
+                fileSize = fileSize
+            )
         }
     }
 
@@ -998,6 +1050,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             // Save locally in Room
             repository.database.userDao().insertOrUpdateUser(updatedUser)
+
+            // Update all channel avatars for this creator
+            repository.database.channelDao().updateChannelAvatarsForCreator(updatedUser.id, updatedUser.profilePictureUrl)
 
             // Save in Firestore document
             firestoreService.updateUserProfile(

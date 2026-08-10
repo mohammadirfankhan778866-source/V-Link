@@ -36,6 +36,7 @@ import com.example.ui.components.PulseAvatar
 import com.example.ui.theme.PulseGreen
 import com.example.ui.theme.VLinkCyan
 import com.example.ui.viewmodels.MainViewModel
+import com.example.ui.viewmodels.NavigationTab
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -55,6 +56,7 @@ fun StatusScreen(viewModel: MainViewModel) {
     var showPostStatusModal by remember { mutableStateOf(false) }
     var captionInput by remember { mutableStateOf("") }
     var statusMediaUrl by remember { mutableStateOf("") }
+    var statusChannelNameInput by remember { mutableStateOf("") }
 
     // Channel specific states
     var showCreateChannelModal by remember { mutableStateOf(false) }
@@ -62,7 +64,9 @@ fun StatusScreen(viewModel: MainViewModel) {
     var channelDescInput by remember { mutableStateOf("") }
     var channelAvatarInput by remember { mutableStateOf("") }
     var activeChannelDetail by remember { mutableStateOf<ChannelEntity?>(null) }
+    var activeUserDetail by remember { mutableStateOf<com.example.data.models.UserEntity?>(null) }
     var channelSearchQuery by remember { mutableStateOf("") }
+    var searchMode by remember { mutableStateOf(0) } // 0 = Channels, 1 = Users
 
     val context = LocalContext.current
 
@@ -245,10 +249,37 @@ fun StatusScreen(viewModel: MainViewModel) {
                         .fillMaxSize()
                         .padding(horizontal = 16.dp)
                 ) {
+                    // Search Mode Selection
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = searchMode == 0,
+                            onClick = { searchMode = 0 },
+                            label = { Text("Search Channels", fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = PulseGreen.copy(alpha = 0.15f),
+                                selectedLabelColor = PulseGreen
+                            )
+                        )
+                        FilterChip(
+                            selected = searchMode == 1,
+                            onClick = { searchMode = 1 },
+                            label = { Text("Search Users", fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = PulseGreen.copy(alpha = 0.15f),
+                                selectedLabelColor = PulseGreen
+                            )
+                        )
+                    }
+
                     OutlinedTextField(
                         value = channelSearchQuery,
                         onValueChange = { channelSearchQuery = it },
-                        placeholder = { Text("Search public channels...") },
+                        placeholder = { Text(if (searchMode == 0) "Search public channels..." else "Search users by username...") },
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -256,58 +287,157 @@ fun StatusScreen(viewModel: MainViewModel) {
                         shape = RoundedCornerShape(24.dp)
                     )
 
-                    val filteredChannels = remember(channels, channelSearchQuery) {
-                        channels.filter { it.name.contains(channelSearchQuery, ignoreCase = true) || it.description.contains(channelSearchQuery, ignoreCase = true) }
-                    }
+                    if (searchMode == 0) {
+                        val filteredChannels = remember(channels, channelSearchQuery) {
+                            channels.filter { it.name.contains(channelSearchQuery, ignoreCase = true) || it.description.contains(channelSearchQuery, ignoreCase = true) }
+                        }
 
-                    val followedChannels = filteredChannels.filter { it.isFollowedByMe || it.creatorId == currentUserId }
-                    val discoverChannels = filteredChannels.filter { !it.isFollowedByMe && it.creatorId != currentUserId }
+                        val followedChannels = filteredChannels.filter { it.isFollowedByMe || it.creatorId == currentUserId }
+                        val discoverChannels = filteredChannels.filter { !it.isFollowedByMe && it.creatorId != currentUserId }
 
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 90.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // Section: My Channels / Followed
-                        if (followedChannels.isNotEmpty()) {
-                            item {
-                                Text("CHANNELS YOU FOLLOW", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = PulseGreen)
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 90.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // Section: My Channels / Followed
+                            if (followedChannels.isNotEmpty()) {
+                                item {
+                                    Text("CHANNELS YOU FOLLOW", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = PulseGreen)
+                                }
+                                items(followedChannels, key = { it.id }) { channel ->
+                                    ChannelRowItem(
+                                        channel = channel,
+                                        onClick = { activeChannelDetail = channel },
+                                        onFollowToggle = { viewModel.toggleFollowChannel(channel) }
+                                    )
+                                }
                             }
-                            items(followedChannels, key = { it.id }) { channel ->
-                                ChannelRowItem(
-                                    channel = channel,
-                                    onClick = { activeChannelDetail = channel },
-                                    onFollowToggle = { viewModel.toggleFollowChannel(channel) }
-                                )
+
+                            // Section: Discover Channels
+                            if (discoverChannels.isNotEmpty()) {
+                                item {
+                                    Text("DISCOVER PUBLIC CHANNELS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
+                                }
+                                items(discoverChannels, key = { it.id }) { channel ->
+                                    ChannelRowItem(
+                                        channel = channel,
+                                        onClick = { activeChannelDetail = channel },
+                                        onFollowToggle = { viewModel.toggleFollowChannel(channel) }
+                                    )
+                                }
+                            }
+
+                            if (filteredChannels.isEmpty()) {
+                                item {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(40.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(Icons.Default.Campaign, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text("No channels found", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // SEARCH USERS MODE
+                        val contacts by viewModel.contacts.collectAsState()
+                        val filteredUsers = remember(contacts, channelSearchQuery) {
+                            contacts.filter {
+                                it.username.contains(channelSearchQuery, ignoreCase = true) ||
+                                it.displayName.contains(channelSearchQuery, ignoreCase = true)
                             }
                         }
 
-                        // Section: Discover Channels
-                        if (discoverChannels.isNotEmpty()) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 90.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
                             item {
-                                Text("DISCOVER PUBLIC CHANNELS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
+                                Text("USER ACCOUNTS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = PulseGreen)
                             }
-                            items(discoverChannels, key = { it.id }) { channel ->
-                                ChannelRowItem(
-                                    channel = channel,
-                                    onClick = { activeChannelDetail = channel },
-                                    onFollowToggle = { viewModel.toggleFollowChannel(channel) }
-                                )
-                            }
-                        }
 
-                        if (filteredChannels.isEmpty()) {
-                            item {
-                                Box(
+                            items(filteredUsers, key = { it.id }) { user ->
+                                Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(40.dp),
-                                    contentAlignment = Alignment.Center
+                                        .clickable { activeUserDetail = user },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Icon(Icons.Default.Campaign, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text("No channels found", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        PulseAvatar(
+                                            imageUrl = user.profilePictureUrl,
+                                            name = user.displayName,
+                                            size = 48.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = user.displayName,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = user.username,
+                                                fontSize = 13.sp,
+                                                color = PulseGreen,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            if (user.bio.isNotBlank()) {
+                                                Text(
+                                                    text = user.bio,
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    modifier = Modifier.padding(top = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(PulseGreen.copy(alpha = 0.1f))
+                                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = "View Profile",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = PulseGreen
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (filteredUsers.isEmpty()) {
+                                item {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(40.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(Icons.Default.PeopleOutline, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text("No users found", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
                                 }
                             }
@@ -431,9 +561,32 @@ fun StatusScreen(viewModel: MainViewModel) {
                                 contentDescription = "Status Preview",
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(200.dp)
+                                    .height(180.dp)
                                     .clip(RoundedCornerShape(12.dp)),
                                 contentScale = ContentScale.Crop
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            
+                            // Mandatory Channel Name input
+                            Text(
+                                "Channel Name Required *",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color.Red
+                            )
+                            Text(
+                                "To upload photos/videos on your account, please specify a Channel name to sync with your account.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            OutlinedTextField(
+                                value = statusChannelNameInput,
+                                onValueChange = { statusChannelNameInput = it },
+                                label = { Text("Channel Name") },
+                                placeholder = { Text("e.g. Irfan's Vlogs") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                         }
@@ -449,7 +602,7 @@ fun StatusScreen(viewModel: MainViewModel) {
                         ) {
                             Icon(Icons.Default.Image, contentDescription = null, tint = PulseGreen)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Select Photo/Video", color = MaterialTheme.colorScheme.onSurface)
+                            Text(if (statusMediaUrl.isNotEmpty()) "Change Photo/Video" else "Select Photo/Video", color = MaterialTheme.colorScheme.onSurface)
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
@@ -461,14 +614,28 @@ fun StatusScreen(viewModel: MainViewModel) {
                     }
                 },
                 confirmButton = {
+                    val isEnabled = if (statusMediaUrl.isNotEmpty()) statusChannelNameInput.isNotBlank() else (captionInput.isNotBlank() || statusMediaUrl.isNotEmpty())
                     Button(
+                        enabled = isEnabled,
                         onClick = {
                             val finalMediaUrl = if (statusMediaUrl.isNotEmpty()) statusMediaUrl else "https://picsum.photos/seed/mystatus_${System.currentTimeMillis()}/800/1200"
                             if (captionInput.isNotBlank() || statusMediaUrl.isNotEmpty()) {
                                 viewModel.postStatus(finalMediaUrl, captionInput)
+                                
+                                // Auto broadcast upload to the chosen channel
+                                if (statusMediaUrl.isNotEmpty() && statusChannelNameInput.isNotBlank()) {
+                                    viewModel.getOrCreateChannelAndPost(
+                                        channelName = statusChannelNameInput,
+                                        content = captionInput.takeIf { it.isNotBlank() } ?: "Uploaded a new status story",
+                                        mediaUrl = finalMediaUrl,
+                                        mediaType = if (finalMediaUrl.contains("video", ignoreCase = true) || finalMediaUrl.contains("mp4", ignoreCase = true)) "VIDEO" else "IMAGE"
+                                    )
+                                }
+                                
                                 showPostStatusModal = false
                                 captionInput = ""
                                 statusMediaUrl = ""
+                                statusChannelNameInput = ""
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
@@ -477,7 +644,12 @@ fun StatusScreen(viewModel: MainViewModel) {
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showPostStatusModal = false }) {
+                    TextButton(onClick = { 
+                        showPostStatusModal = false 
+                        captionInput = ""
+                        statusMediaUrl = ""
+                        statusChannelNameInput = ""
+                    }) {
                         Text("Cancel")
                     }
                 }
@@ -791,6 +963,247 @@ fun StatusScreen(viewModel: MainViewModel) {
                                     )
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // User Account Detailed View Overlay
+        if (activeUserDetail != null) {
+            val user = activeUserDetail!!
+            val postsList by viewModel.posts.collectAsState()
+            val userPosts = remember(postsList, user.id) { postsList.filter { it.userId == user.id } }
+            
+            Dialog(onDismissRequest = { activeUserDetail = null }) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        // Top Profile Bar
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surface)
+                                .padding(horizontal = 8.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { activeUserDetail = null }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
+                            Text(
+                                text = "Account Details",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        // Profile Header Card
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Box(contentAlignment = Alignment.BottomEnd) {
+                                    PulseAvatar(
+                                        imageUrl = user.profilePictureUrl,
+                                        name = user.displayName,
+                                        size = 96.dp
+                                    )
+                                    // Online status dot badge
+                                    val isOnline = user.onlineStatus == "ONLINE"
+                                    Box(
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.White)
+                                            .padding(2.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(CircleShape)
+                                                .background(if (isOnline) PulseGreen else Color.Gray)
+                                        )
+                                    }
+                                }
+                                
+                                Spacer(modifier = Modifier.height(12.dp))
+                                
+                                Text(
+                                    text = user.displayName,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 20.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = user.username,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    color = PulseGreen,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                                
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                // Stats Row
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(text = "${userPosts.size}", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                                        Text(text = "Posts", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Box(modifier = Modifier.width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(text = "1.5K", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                                        Text(text = "Followers", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Box(modifier = Modifier.width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(text = "420", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                                        Text(text = "Following", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Details and Bio section
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text("ABOUT USER", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = PulseGreen)
+                            
+                            if (user.bio.isNotBlank()) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("Bio", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(user.bio, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                            }
+
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Email", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(user.email.ifBlank { "N/A" }, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                    }
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Online Status", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(user.onlineStatus, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (user.onlineStatus == "ONLINE") PulseGreen else Color.Gray)
+                                    }
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Member Since", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(user.accountCreatedDate, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                    }
+                                }
+                            }
+
+                            // Private Message CTA
+                            Button(
+                                onClick = {
+                                    viewModel.startChatWithContact(user)
+                                    viewModel.selectTab(NavigationTab.CHATS)
+                                    activeUserDetail = null
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                                shape = RoundedCornerShape(24.dp)
+                            ) {
+                                Icon(Icons.Default.Message, contentDescription = null, tint = Color.White)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Send Private Message", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+                            }
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            // Recent Posts Grid / List Header
+                            Text("RECENT POSTS BY USER", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            
+                            if (userPosts.isEmpty()) {
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f))
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(32.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(Icons.Default.Feed, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text("No recent posts", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    userPosts.take(5).forEach { post ->
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp)) {
+                                                if (post.mediaUrl.isNotEmpty()) {
+                                                    if (post.mediaType == "IMAGE") {
+                                                        AsyncImage(
+                                                            model = post.mediaUrl,
+                                                            contentDescription = "Post photo",
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .height(150.dp)
+                                                                .clip(RoundedCornerShape(8.dp)),
+                                                            contentScale = ContentScale.Crop
+                                                        )
+                                                        Spacer(modifier = Modifier.height(8.dp))
+                                                    }
+                                                }
+                                                Text(post.content, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            Spacer(modifier = Modifier.height(120.dp))
                         }
                     }
                 }

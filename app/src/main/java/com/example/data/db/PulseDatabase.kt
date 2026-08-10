@@ -151,6 +151,9 @@ interface ChannelDao {
     @Query("SELECT * FROM channels ORDER BY lastMessageTimestamp DESC")
     fun getAllChannels(): Flow<List<ChannelEntity>>
 
+    @Query("SELECT * FROM channels")
+    suspend fun getAllChannelsOnce(): List<ChannelEntity>
+
     @Query("SELECT * FROM channels WHERE id = :channelId LIMIT 1")
     suspend fun getChannelById(channelId: String): ChannelEntity?
 
@@ -165,6 +168,9 @@ interface ChannelDao {
 
     @Query("UPDATE channels SET lastMessageText = :text, lastMessageTimestamp = :timestamp WHERE id = :channelId")
     suspend fun updateLastMessage(channelId: String, text: String, timestamp: Long)
+
+    @Query("UPDATE channels SET avatarUrl = :avatarUrl WHERE creatorId = :creatorId")
+    suspend fun updateChannelAvatarsForCreator(creatorId: String, avatarUrl: String)
 
     @Query("DELETE FROM channels WHERE id = :channelId")
     suspend fun deleteChannel(channelId: String)

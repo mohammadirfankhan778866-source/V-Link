@@ -25,9 +25,8 @@ workflows:
           echo "org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=512m" >> gradle.properties
           echo "android.useAndroidX=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
-      - name: Generate Gradle Wrapper
+      - name: Set executable permission for Gradlew
         script: |
-          gradle wrapper
           chmod +x gradlew
       - name: Check Java and Gradle version
         script: |

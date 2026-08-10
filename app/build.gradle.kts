@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.util.Base64
 
 plugins {
   alias(libs.plugins.android.application)
@@ -27,13 +28,39 @@ android {
   signingConfigs {
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      val keystoreFile = file(keystorePath)
+      val storePasswordEnv = System.getenv("STORE_PASSWORD")
+      if (keystoreFile.exists() && !storePasswordEnv.isNullOrBlank()) {
+        storeFile = keystoreFile
+        storePassword = storePasswordEnv
+        keyAlias = "upload"
+        keyPassword = System.getenv("KEY_PASSWORD")
+      } else {
+        // Fallback to debug config so that builds succeed on CI/CD when keys are not configured yet
+        val debugKeystoreFile = file("${rootDir}/debug.keystore")
+        if (!debugKeystoreFile.exists()) {
+          val base64File = file("${rootDir}/debug.keystore.base64")
+          if (base64File.exists()) {
+            val decoded = Base64.getDecoder().decode(base64File.readText().trim())
+            debugKeystoreFile.writeBytes(decoded)
+          }
+        }
+        storeFile = debugKeystoreFile
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
     }
     create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
+      val keystoreFile = file("${rootDir}/debug.keystore")
+      if (!keystoreFile.exists()) {
+        val base64File = file("${rootDir}/debug.keystore.base64")
+        if (base64File.exists()) {
+          val decoded = Base64.getDecoder().decode(base64File.readText().trim())
+          keystoreFile.writeBytes(decoded)
+        }
+      }
+      storeFile = keystoreFile
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
