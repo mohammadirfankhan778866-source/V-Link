@@ -13,6 +13,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import androidx.work.Constraints
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
+import com.example.worker.SyncWorker
 
 class PulseApplication : Application() {
     private val applicationScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -49,10 +55,27 @@ class PulseApplication : Application() {
         authRepository = com.example.data.repository.AuthRepository(this)
 
         createNotificationChannels()
+        setupSyncWorker()
 
         applicationScope.launch {
             chatRepository.populateSeedDataIfEmpty()
         }
+    }
+
+    private fun setupSyncWorker() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+            
+        val syncWorkRequest = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
+            .setConstraints(constraints)
+            .build()
+            
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "PulseSyncWorker",
+            androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+            syncWorkRequest
+        )
     }
 
     private fun createNotificationChannels() {

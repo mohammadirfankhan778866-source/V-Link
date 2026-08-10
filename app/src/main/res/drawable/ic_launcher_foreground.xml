@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/vlink_premium_logo_1786364918401"
+        android:drawable="@drawable/vlink_formal_logo_1786379089872"
         android:gravity="center" />
 </layer-list>

@@ -103,7 +103,7 @@ fun AuthScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.vlink_premium_logo_1786364918401),
+                        painter = painterResource(id = R.drawable.vlink_formal_logo_1786379089872),
                         contentDescription = "V-Link Official Logo",
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
