@@ -52,6 +52,19 @@ fun SettingsScreen(viewModel: MainViewModel) {
         }
     }
 
+    var showContextualDpModal by remember { mutableStateOf(false) }
+    var showStatusPrivacyModal by remember { mutableStateOf(false) }
+    
+    // Status Privacy Options
+    var statusPrivacyMode by remember { mutableStateOf(currentUser?.statusPrivacyMode ?: "PUBLIC") }
+    var statusPrivacyList by remember { mutableStateOf(currentUser?.statusPrivacyList ?: "") }
+    
+    // DP Options
+    var chatDpUrl by remember { mutableStateOf(currentUser?.chatProfilePictureUrl ?: "") }
+    var postDpUrl by remember { mutableStateOf(currentUser?.postProfilePictureUrl ?: "") }
+    var channelDpUrl by remember { mutableStateOf(currentUser?.channelProfilePictureUrl ?: "") }
+    var channelAliasInput by remember { mutableStateOf(currentUser?.channelAlias ?: "") }
+
     LaunchedEffect(currentUser) {
         currentUser?.let {
             editName = it.displayName
@@ -276,6 +289,129 @@ fun SettingsScreen(viewModel: MainViewModel) {
                     )
                 }
             }
+        }
+
+
+        // Contextual DP Modal
+        if (showContextualDpModal) {
+            AlertDialog(
+                onDismissRequest = { showContextualDpModal = false },
+                title = { Text("Contextual Profiles", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text("You can set different Profile Pictures (DP) based on where you are seen.", fontSize = 13.sp)
+                        
+                        OutlinedTextField(
+                            value = chatDpUrl,
+                            onValueChange = { chatDpUrl = it },
+                            label = { Text("Chat DP (URL)") },
+                            placeholder = { Text("Leave blank to use main DP") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        
+                        OutlinedTextField(
+                            value = postDpUrl,
+                            onValueChange = { postDpUrl = it },
+                            label = { Text("Post DP (URL)") },
+                            placeholder = { Text("Leave blank to use main DP") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        
+                        OutlinedTextField(
+                            value = channelDpUrl,
+                            onValueChange = { channelDpUrl = it },
+                            label = { Text("Channel DP (URL)") },
+                            placeholder = { Text("Leave blank to use main DP") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        
+                        OutlinedTextField(
+                            value = channelAliasInput,
+                            onValueChange = { channelAliasInput = it },
+                            label = { Text("Channel Alias (Username)") },
+                            placeholder = { Text("e.g. MySecretAlias") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.updateContextualProfiles(chatDpUrl, postDpUrl, channelDpUrl, channelAliasInput)
+                            showContextualDpModal = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showContextualDpModal = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+        
+        // Status Privacy Modal
+        if (showStatusPrivacyModal) {
+            AlertDialog(
+                onDismissRequest = { showStatusPrivacyModal = false },
+                title = { Text("Status Privacy", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("Who can see my status updates?", fontSize = 13.sp)
+                        
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = statusPrivacyMode == "PUBLIC", onClick = { statusPrivacyMode = "PUBLIC" })
+                            Text("My Contacts (Public)")
+                        }
+                        
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = statusPrivacyMode == "EXCEPT", onClick = { statusPrivacyMode = "EXCEPT" })
+                            Text("My Contacts Except...")
+                        }
+                        
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = statusPrivacyMode == "ONLY_SHARE_WITH", onClick = { statusPrivacyMode = "ONLY_SHARE_WITH" })
+                            Text("Only Share With...")
+                        }
+                        
+                        if (statusPrivacyMode != "PUBLIC") {
+                            OutlinedTextField(
+                                value = statusPrivacyList,
+                                onValueChange = { statusPrivacyList = it },
+                                label = { Text(if (statusPrivacyMode == "EXCEPT") "Hide from (Usernames)" else "Share with (Usernames)") },
+                                placeholder = { Text("user1, user2") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Enter usernames separated by commas.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.updateStatusPrivacy(statusPrivacyMode, statusPrivacyList)
+                            showStatusPrivacyModal = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                    ) {
+                        Text("Save Privacy")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showStatusPrivacyModal = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
 
         // Edit Profile Dialog

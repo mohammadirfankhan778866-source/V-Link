@@ -13,6 +13,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material3.FilterChip
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -55,6 +58,7 @@ fun PostsScreen(viewModel: MainViewModel) {
     var attachedFileName by remember { mutableStateOf("") }
     var attachedFileSize by remember { mutableStateOf("") }
     var postChannelNameInput by remember { mutableStateOf("") }
+    var postVisibility by remember { mutableStateOf("PUBLIC") }
 
     val context = LocalContext.current
 
@@ -243,6 +247,7 @@ fun PostsScreen(viewModel: MainViewModel) {
                     attachedMediaType = "TEXT"
                     attachedFileName = ""
                     attachedFileSize = ""
+                    postVisibility = "PUBLIC"
                 },
                 title = { Text("Create Public Post", fontWeight = FontWeight.Bold) },
                 text = {
@@ -360,6 +365,26 @@ fun PostsScreen(viewModel: MainViewModel) {
                                 singleLine = true
                             )
                             Spacer(modifier = Modifier.height(4.dp))
+                        }
+
+                        
+                        // Visibility Toggle
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Visibility: ", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            FilterChip(
+                                selected = postVisibility == "PUBLIC",
+                                onClick = { postVisibility = "PUBLIC" },
+                                label = { Text("Public") },
+                                leadingIcon = { if (postVisibility == "PUBLIC") Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            FilterChip(
+                                selected = postVisibility == "FRIENDS_ONLY",
+                                onClick = { postVisibility = "FRIENDS_ONLY" },
+                                label = { Text("Friends Only") },
+                                leadingIcon = { if (postVisibility == "FRIENDS_ONLY") Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            )
                         }
 
                         // Attach options
@@ -549,7 +574,8 @@ fun PostsScreen(viewModel: MainViewModel) {
                                     mediaUrl = attachedFileUrl,
                                     mediaType = attachedMediaType,
                                     fileExtension = if (attachedMediaType == "DOCUMENT") "pdf" else if (attachedMediaType == "VIDEO") "mp4" else if (attachedMediaType == "GAME") "game" else "jpg",
-                                    fileSize = attachedFileSize
+                                    fileSize = attachedFileSize,
+                                    visibility = postVisibility
                                 )
                                 
                                 // Automatically sync upload to user's specified channel
@@ -560,7 +586,8 @@ fun PostsScreen(viewModel: MainViewModel) {
                                         mediaUrl = attachedFileUrl,
                                         mediaType = attachedMediaType,
                                         fileName = attachedFileName,
-                                        fileSize = attachedFileSize
+                                        fileSize = attachedFileSize,
+                                    visibility = postVisibility
                                     )
                                 }
                                 
@@ -588,6 +615,7 @@ fun PostsScreen(viewModel: MainViewModel) {
                             attachedFileName = ""
                             attachedFileSize = ""
                             postChannelNameInput = ""
+                            postVisibility = "PUBLIC"
                         }
                     ) {
                         Text("Cancel")

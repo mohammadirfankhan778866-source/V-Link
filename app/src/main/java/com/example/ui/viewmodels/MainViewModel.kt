@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 
 enum class NavigationTab {
-    CHATS, UPDATES, POSTS, CALLS, SETTINGS
+    CHATS, UPDATES, POSTS, CHANNELS, CALLS
 }
 
 data class TempGoogleUser(
@@ -128,13 +128,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return repository.getMessagesForChannel(channelId)
     }
 
-    fun createChannel(name: String, description: String, avatarUrl: String) {
+    fun createChannel(name: String, description: String, avatarUrl: String, visibility: String = "PUBLIC") {
         viewModelScope.launch {
             val user = currentUser.value
             val creatorId = user?.id ?: "usr_google_irfan_9075"
-            val creatorName = user?.displayName ?: "Mohammad Irfan Khan"
-            val finalAvatar = user?.profilePictureUrl?.takeIf { it.isNotBlank() } ?: avatarUrl
-            repository.createChannel(name, description, creatorId, creatorName, finalAvatar)
+            val creatorName = user?.channelAlias?.takeIf { it.isNotBlank() } ?: user?.displayName ?: "User"
+            val finalAvatar = user?.channelProfilePictureUrl?.takeIf { it.isNotBlank() } ?: user?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300"
+            
+            val newChannel = ChannelEntity(
+                id = java.util.UUID.randomUUID().toString(),
+                name = name,
+                description = description,
+                creatorId = creatorId,
+                creatorName = creatorName,
+                avatarUrl = avatarUrl.ifBlank { "https://picsum.photos/seed/${name.trim()}/300/300" },
+                followerCount = 1,
+                isFollowedByMe = true,
+                visibility = visibility
+            )
+            repository.database.channelDao().insertChannel(newChannel)
         }
     }
 
@@ -154,14 +166,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun getOrCreateChannelAndPost(
-        channelName: String,
-        content: String,
-        mediaUrl: String,
-        mediaType: String,
-        fileName: String = "",
-        fileSize: String = ""
-    ) {
+    fun getOrCreateChannelAndPost(channelName: String, content: String, mediaUrl: String, mediaType: String, fileName: String = "", fileSize: String = "", visibility: String = "PUBLIC") {
         viewModelScope.launch(Dispatchers.IO) {
             val user = currentUser.value
             val creatorId = user?.id ?: "usr_google_irfan_9075"
@@ -205,13 +210,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun createPost(content: String, mediaUrl: String = "", mediaType: String = "TEXT", fileExtension: String = "", fileSize: String = "") {
+    fun createPost(content: String, mediaUrl: String = "", mediaType: String = "TEXT", fileExtension: String = "", fileSize: String = "", visibility: String = "PUBLIC") {
         viewModelScope.launch {
             val user = currentUser.value
             val userId = user?.id ?: "usr_google_irfan_9075"
-            val userName = user?.displayName ?: "Mohammad Irfan Khan"
-            val userAvatar = user?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300"
-            repository.createPost(userId, userName, userAvatar, content, mediaUrl, mediaType, fileExtension, fileSize)
+            val userName = user?.displayName ?: "User"
+            val userAvatar = user?.postProfilePictureUrl?.takeIf { it.isNotBlank() } ?: user?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300"
+            
+            val newPost = PostEntity(
+                id = java.util.UUID.randomUUID().toString(),
+                userId = userId,
+                userName = userName,
+                userAvatar = userAvatar,
+                content = content,
+                mediaUrl = mediaUrl,
+                mediaType = mediaType,
+                fileExtension = fileExtension,
+                fileSize = fileSize,
+                visibility = visibility
+            )
+            repository.database.postDao().insertPost(newPost)
         }
     }
 
@@ -661,85 +679,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isWeakNetworkSimulated.value = !_isWeakNetworkSimulated.value
     }
 
-    private fun saveLocalCredential(username: String, email: String, password: String, user: UserEntity) {
-        val prefs = getApplication<Application>().getSharedPreferences("pulse_chat_local_creds", android.content.Context.MODE_PRIVATE)
-        val cleanUsername = username.lowercase().removePrefix("@").trim()
-        val emailKey = email.lowercase().trim()
-        
-        prefs.edit()
-            .putString("pwd_u_$cleanUsername", password)
-            .putString("pwd_e_$emailKey", password)
-            .putString("uid_u_$cleanUsername", user.id)
-            .putString("uid_e_$emailKey", user.id)
-            .putString("email_u_$cleanUsername", email)
-            .putString("uname_e_$emailKey", cleanUsername)
-            .putString("disp_u_$cleanUsername", user.displayName)
-            .putString("disp_e_$emailKey", user.displayName)
-            .apply()
-        android.util.Log.i("MainViewModel", "Saved local sandbox credentials for $username ($email)")
-    }
-
+    
     suspend fun performLoginBack(usernameOrEmail: String, password: String): Boolean {
         return withContext(Dispatchers.IO) {
             val input = usernameOrEmail.trim()
             if (input.isEmpty() || password.isEmpty()) return@withContext false
-
-            val cleanInput = input.lowercase().removePrefix("@").trim()
-            val prefs = getApplication<Application>().getSharedPreferences("pulse_chat_local_creds", android.content.Context.MODE_PRIVATE)
-            
             val isEmail = input.contains("@") && !input.startsWith("@")
-            val storedPassword = if (isEmail) {
-                prefs.getString("pwd_e_$cleanInput", null)
-            } else {
-                prefs.getString("pwd_u_$cleanInput", null)
-            }
+            
+            // Try Firebase Auth
 
-            // 1. Check local Sandbox Credential first
-            if (storedPassword != null && storedPassword == password) {
-                val localUserId = if (isEmail) {
-                    prefs.getString("uid_e_$cleanInput", "usr_local_$cleanInput") ?: "usr_local_$cleanInput"
-                } else {
-                    prefs.getString("uid_u_$cleanInput", "usr_local_$cleanInput") ?: "usr_local_$cleanInput"
-                }
-                
-                val dispName = if (isEmail) {
-                    prefs.getString("disp_e_$cleanInput", cleanInput) ?: cleanInput
-                } else {
-                    prefs.getString("disp_u_$cleanInput", cleanInput) ?: cleanInput
-                }
-
-                val email = if (isEmail) {
-                    input
-                } else {
-                    prefs.getString("email_u_$cleanInput", "$cleanInput@vlink.chat") ?: "$cleanInput@vlink.chat"
-                }
-
-                val username = if (isEmail) {
-                    "@" + (prefs.getString("uname_e_$cleanInput", cleanInput) ?: cleanInput)
-                } else {
-                    "@$cleanInput"
-                }
-
-                val user = UserEntity(
-                    id = localUserId,
-                    displayName = dispName,
-                    username = username,
-                    email = email,
-                    profilePictureUrl = "https://picsum.photos/seed/${cleanInput}/300/300",
-                    bio = "Connecting via V-Link (Sandbox Mode) ⚡",
-                    onlineStatus = "ONLINE",
-                    isCurrentUser = true,
-                    emailVerified = true,
-                    authProvider = "email_sandbox"
-                )
-
-                repository.database.userDao().insertOrUpdateUser(user)
-                sessionManager.saveCustomUserSession("vlink_jwt_sandbox_${System.currentTimeMillis()}", user)
-                android.util.Log.i("MainViewModel", "Logged in via local credential sandbox fallback successfully!")
-                return@withContext true
-            }
-
-            // 2. Real Firebase authentication fallback
             try {
                 val resolvedEmail = if (isEmail) {
                     input
@@ -755,37 +703,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (userEntity != null) {
                             repository.database.userDao().insertOrUpdateUser(userEntity.copy(isCurrentUser = true))
                             sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", userEntity)
-                            saveLocalCredential(userEntity.username, userEntity.email, password, userEntity)
+                            
                             return@withContext true
                         }
                     }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("MainViewModel", "Real Firebase login failed: ${e.message}")
-            }
-
-            // 3. Last resort auto-sandbox generator (extremely resilient fallback for testing)
-            // If they are logging in with a username and any password, let's create a profile on-the-fly!
-            try {
-                val user = UserEntity(
-                    id = "usr_local_$cleanInput",
-                    displayName = cleanInput.replaceFirstChar { it.uppercase() },
-                    username = if (cleanInput.contains("@")) "@" + cleanInput.substringBefore("@") else "@$cleanInput",
-                    email = if (cleanInput.contains("@")) cleanInput else "$cleanInput@vlink.chat",
-                    profilePictureUrl = "https://picsum.photos/seed/$cleanInput/300/300",
-                    bio = "Connecting via V-Link (Sandbox Mode) ⚡",
-                    onlineStatus = "ONLINE",
-                    isCurrentUser = true,
-                    emailVerified = true,
-                    authProvider = "email_sandbox"
-                )
-                repository.database.userDao().insertOrUpdateUser(user)
-                sessionManager.saveCustomUserSession("vlink_jwt_sandbox_${System.currentTimeMillis()}", user)
-                saveLocalCredential(user.username, user.email, password, user)
-                android.util.Log.i("MainViewModel", "Auto-generated local account for resilient sign-in fallback")
-                return@withContext true
-            } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Resilient fallback failed: ${e.message}")
             }
 
             return@withContext false
@@ -815,7 +739,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun postStatus(mediaUrl: String, caption: String) {
         viewModelScope.launch {
-            repository.postStatusStory(mediaUrl, caption)
+            val user = currentUser.value
+            val userId = user?.id ?: "usr_google_irfan_9075"
+            val userName = user?.displayName ?: "User"
+            val userAvatar = user?.chatProfilePictureUrl?.takeIf { it.isNotBlank() } ?: user?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300"
+            
+            val status = StatusStoryEntity(
+                id = java.util.UUID.randomUUID().toString(),
+                userId = userId,
+                userName = userName,
+                userAvatar = userAvatar,
+                mediaUrl = mediaUrl,
+                caption = caption,
+                isMine = true
+            )
+            repository.database.statusDao().insertStatus(status)
         }
     }
 
@@ -997,7 +935,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (registered) {
                             repository.database.userDao().insertOrUpdateUser(user)
                             sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", user)
-                            saveLocalCredential(cleanUsername, email, password, user)
+                            
                             return@withContext true
                         }
                     }
@@ -1006,36 +944,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 android.util.Log.e("MainViewModel", "Real Firebase registration failed, using Sandbox: ${e.message}")
             }
 
-            // --- SANDBOX / OFFLINE REGISTER FALLBACK (Roblox-style high reliability) ---
-            try {
-                val cleanUname = cleanUsername.lowercase().removePrefix("@").trim()
-                val localUserId = "usr_local_" + cleanUname
-                val user = UserEntity(
-                    id = localUserId,
-                    displayName = displayName.trim(),
-                    username = cleanUsername,
-                    email = email.trim(),
-                    profilePictureUrl = "https://picsum.photos/seed/$cleanUname/300/300",
-                    bio = "Connecting via V-Link (Sandbox Mode) ⚡",
-                    onlineStatus = "ONLINE",
-                    isCurrentUser = true,
-                    emailVerified = true,
-                    authProvider = "email_sandbox"
-                )
+            return@withContext false
+        }
+    }
 
-                // Save locally
-                repository.database.userDao().insertOrUpdateUser(user)
-                sessionManager.saveCustomUserSession("vlink_jwt_sandbox_${System.currentTimeMillis()}", user)
-                
-                // Save credentials in SharedPreferences
-                saveLocalCredential(cleanUsername, email, password, user)
-                
-                android.util.Log.i("MainViewModel", "Sandbox registration successful for user: $cleanUsername")
-                return@withContext true
-            } catch (ex: Exception) {
-                android.util.Log.e("MainViewModel", "Sandbox registration failed: ${ex.message}")
-                return@withContext false
-            }
+    
+    fun updateContextualProfiles(chatDpUrl: String, postDpUrl: String, channelDpUrl: String, channelAlias: String) {
+        viewModelScope.launch {
+            val user = currentUser.value ?: return@launch
+            val updatedUser = user.copy(
+                chatProfilePictureUrl = chatDpUrl,
+                postProfilePictureUrl = postDpUrl,
+                channelProfilePictureUrl = channelDpUrl,
+                channelAlias = channelAlias
+            )
+            repository.database.userDao().insertOrUpdateUser(updatedUser)
+        }
+    }
+
+    fun updateStatusPrivacy(mode: String, list: String) {
+        viewModelScope.launch {
+            val user = currentUser.value ?: return@launch
+            val updatedUser = user.copy(
+                statusPrivacyMode = mode,
+                statusPrivacyList = list
+            )
+            repository.database.userDao().insertOrUpdateUser(updatedUser)
         }
     }
 

@@ -32,7 +32,13 @@ data class UserEntity(
     val accountCreatedDate: String = "2026-01-15",
     val isCurrentUser: Boolean = false,
     val emailVerified: Boolean = false,
-    val authProvider: String = "email"
+    val authProvider: String = "email",
+    val chatProfilePictureUrl: String = "",
+    val postProfilePictureUrl: String = "",
+    val channelProfilePictureUrl: String = "",
+    val channelAlias: String = "",
+    val statusPrivacyMode: String = "PUBLIC",
+    val statusPrivacyList: String = ""
 )
 
 @Entity(tableName = "chats")
@@ -113,7 +119,8 @@ data class ChannelEntity(
     val followerCount: Int = 0,
     val isFollowedByMe: Boolean = false,
     val lastMessageText: String = "",
-    val lastMessageTimestamp: Long = System.currentTimeMillis()
+    val lastMessageTimestamp: Long = System.currentTimeMillis(),
+    val visibility: String = "PUBLIC" // PUBLIC, FRIENDS_ONLY
 )
 
 @Entity(tableName = "channel_messages")
@@ -144,7 +151,8 @@ data class PostEntity(
     val likesCount: Int = 0,
     val isLikedByMe: Boolean = false,
     val fileExtension: String = "",
-    val fileSize: String = ""
+    val fileSize: String = "",
+    val visibility: String = "PUBLIC" // PUBLIC, FRIENDS_ONLY
 )
 
 data class AdminAnalytics(

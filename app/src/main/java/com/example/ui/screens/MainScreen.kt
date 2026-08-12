@@ -44,6 +44,7 @@ fun MainScreen(viewModel: MainViewModel) {
         )
     } else {
         Scaffold(
+            modifier = Modifier.systemBarsPadding(),
             bottomBar = {
                 GlassmorphicFloatingNavigationBar(
                     currentTab = currentTab,
@@ -74,10 +75,10 @@ fun MainScreen(viewModel: MainViewModel) {
                             unselectedIcon = Icons.Outlined.Call
                         ),
                         NavigationTabItemData(
-                            tab = NavigationTab.SETTINGS,
-                            label = "Settings",
-                            selectedIcon = Icons.Default.Settings,
-                            unselectedIcon = Icons.Outlined.Settings
+                            tab = NavigationTab.CHANNELS,
+                            label = "Channels",
+                            selectedIcon = Icons.Default.Language,
+                            unselectedIcon = Icons.Outlined.Language
                         )
                     )
                 )
@@ -96,7 +97,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     NavigationTab.UPDATES -> StatusScreen(viewModel = viewModel)
                     NavigationTab.POSTS -> PostsScreen(viewModel = viewModel)
                     NavigationTab.CALLS -> CallsScreen(viewModel = viewModel)
-                    NavigationTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
+                    NavigationTab.CHANNELS -> ChannelsScreen(viewModel = viewModel)
                 }
             }
         }
