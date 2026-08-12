@@ -82,11 +82,11 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       val customReleaseConfig = signingConfigs.getByName("release")
       val customDebugConfig = signingConfigs.getByName("debugConfig")
-      signingConfig = if (customReleaseConfig.storeFile?.exists() == true) customReleaseConfig else customDebugConfig
+      signingConfig = if (customReleaseConfig.storeFile?.exists() == true) customReleaseConfig else if (customDebugConfig.storeFile?.exists() == true) customDebugConfig else signingConfigs.getByName("debug")
     }
     debug { 
       val customDebugConfig = signingConfigs.getByName("debugConfig")
-      signingConfig = customDebugConfig
+      signingConfig = if (customDebugConfig.storeFile?.exists() == true) customDebugConfig else signingConfigs.getByName("debug")
     }
   }
   compileOptions {
