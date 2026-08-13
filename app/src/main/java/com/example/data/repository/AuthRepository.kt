@@ -32,8 +32,13 @@ class AuthRepository(private val context: Context) {
         return try {
             fbAuth.createUserWithEmailAndPassword(email, password).await()
         } catch (e: Exception) {
-            Log.e("AuthRepository", "Error registering: ${e.message}")
-            null
+            Log.w("AuthRepository", "Error registering with createUserWithEmailAndPassword: ${e.message}")
+            try {
+                fbAuth.signInWithEmailAndPassword(email, password).await()
+            } catch (e2: Exception) {
+                Log.e("AuthRepository", "Fallback sign-in also failed: ${e2.message}")
+                null
+            }
         }
     }
 
