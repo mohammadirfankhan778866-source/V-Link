@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import com.example.data.models.CallLogEntity
 import com.example.data.models.CallType
 import com.example.ui.components.PulseAvatar
@@ -30,27 +31,86 @@ import java.util.*
 fun CallsScreen(viewModel: MainViewModel) {
     val calls by viewModel.calls.collectAsState()
     val contacts by viewModel.contacts.collectAsState()
+    val scope = rememberCoroutineScope()
 
     var showNewCallDialog by remember { mutableStateOf(false) }
-    var selectedContactName by remember { mutableStateOf("") }
-    var selectedContactAvatar by remember { mutableStateOf("") }
+    var selectedUsernameInput by remember { mutableStateOf("") }
+    var callErrorMessage by remember { mutableStateOf<String?>(null) }
+    var isCheckingUser by remember { mutableStateOf(false) }
+
+    var selectedContactForCallModal by remember { mutableStateOf<CallLogEntity?>(null) }
+
+    if (selectedContactForCallModal != null) {
+        val contactCall = selectedContactForCallModal!!
+        AlertDialog(
+            onDismissRequest = { selectedContactForCallModal = null },
+            title = { Text("Call ${contactCall.contactName}") },
+            text = { Text("Choose call type for ${contactCall.contactUsername}:") },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            viewModel.startCall(
+                                contactName = contactCall.contactName,
+                                contactAvatar = contactCall.contactAvatar,
+                                isVideo = false,
+                                contactUsername = contactCall.contactUsername
+                            )
+                            selectedContactForCallModal = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                    ) {
+                        Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Call")
+                    }
+
+                    Button(
+                        onClick = {
+                            viewModel.startCall(
+                                contactName = contactCall.contactName,
+                                contactAvatar = contactCall.contactAvatar,
+                                isVideo = true,
+                                contactUsername = contactCall.contactUsername
+                            )
+                            selectedContactForCallModal = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                    ) {
+                        Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Video Call")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedContactForCallModal = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     if (showNewCallDialog) {
         AlertDialog(
-            onDismissRequest = { showNewCallDialog = false },
+            onDismissRequest = {
+                showNewCallDialog = false
+                callErrorMessage = null
+            },
             title = { Text("Start New Call") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (contacts.isNotEmpty()) {
                         Text("Select Contact:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        LazyColumn(modifier = Modifier.heightIn(max = 200.dp)) {
+                        LazyColumn(modifier = Modifier.heightIn(max = 140.dp)) {
                             items(contacts, key = { it.id }) { contact ->
                                 ListItem(
                                     headlineContent = { Text(contact.displayName, fontWeight = FontWeight.Bold) },
+                                    supportingContent = { Text(contact.username, fontSize = 12.sp, color = VLinkCyan) },
                                     leadingContent = { PulseAvatar(imageUrl = contact.profilePictureUrl, name = contact.displayName) },
                                     modifier = Modifier.clickable {
-                                        selectedContactName = contact.displayName
-                                        selectedContactAvatar = contact.profilePictureUrl
+                                        selectedUsernameInput = contact.username
+                                        callErrorMessage = null
                                     }
                                 )
                             }
@@ -58,52 +118,92 @@ fun CallsScreen(viewModel: MainViewModel) {
                     }
 
                     OutlinedTextField(
-                        value = selectedContactName,
+                        value = selectedUsernameInput,
                         onValueChange = {
-                            selectedContactName = it
-                            selectedContactAvatar = "https://picsum.photos/seed/$it/300/300"
+                            selectedUsernameInput = it
+                            callErrorMessage = null
                         },
-                        label = { Text("Contact Name") },
+                        label = { Text("Enter Username (e.g., @john)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (callErrorMessage != null) {
+                        Text(
+                            text = callErrorMessage!!,
+                            color = CallEndRed,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (isCheckingUser) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = PulseGreen)
+                            Text("Verifying user...", fontSize = 12.sp, color = PulseGreen)
+                        }
+                    }
                 }
             },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = {
-                            if (selectedContactName.isNotBlank()) {
-                                viewModel.startCall(selectedContactName, selectedContactAvatar, false)
-                                showNewCallDialog = false
+                            if (selectedUsernameInput.isNotBlank()) {
+                                isCheckingUser = true
+                                scope.launch {
+                                    val (success, msg) = viewModel.startCallWithValidation(selectedUsernameInput, isVideo = false)
+                                    isCheckingUser = false
+                                    if (success) {
+                                        showNewCallDialog = false
+                                        callErrorMessage = null
+                                    } else {
+                                        callErrorMessage = msg
+                                    }
+                                }
                             }
                         },
-                        enabled = selectedContactName.isNotBlank(),
+                        enabled = selectedUsernameInput.isNotBlank() && !isCheckingUser,
                         colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
                     ) {
                         Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Voice")
+                        Text("Call")
                     }
 
                     Button(
                         onClick = {
-                            if (selectedContactName.isNotBlank()) {
-                                viewModel.startCall(selectedContactName, selectedContactAvatar, true)
-                                showNewCallDialog = false
+                            if (selectedUsernameInput.isNotBlank()) {
+                                isCheckingUser = true
+                                scope.launch {
+                                    val (success, msg) = viewModel.startCallWithValidation(selectedUsernameInput, isVideo = true)
+                                    isCheckingUser = false
+                                    if (success) {
+                                        showNewCallDialog = false
+                                        callErrorMessage = null
+                                    } else {
+                                        callErrorMessage = msg
+                                    }
+                                }
                             }
                         },
-                        enabled = selectedContactName.isNotBlank(),
+                        enabled = selectedUsernameInput.isNotBlank() && !isCheckingUser,
                         colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
                     ) {
                         Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Video")
+                        Text("Video Call")
                     }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showNewCallDialog = false }) {
+                TextButton(onClick = {
+                    showNewCallDialog = false
+                    callErrorMessage = null
+                }) {
                     Text("Cancel")
                 }
             }
@@ -150,7 +250,7 @@ fun CallsScreen(viewModel: MainViewModel) {
                 items(calls, key = { it.id }) { call ->
                     CallLogItemRow(
                         call = call,
-                        onCallClick = { viewModel.startCall(call.contactName, call.contactAvatar, call.callType == CallType.VIDEO.name) }
+                        onCallClick = { selectedContactForCallModal = call }
                     )
                 }
             }

@@ -295,6 +295,9 @@ class ChatRepository(
         database.messageDao().deleteFakeMessages()
         database.statusDao().deleteFakeStatuses()
         database.callDao().deleteFakeCalls()
+        database.channelDao().deleteFakeChannels()
+        database.channelMessageDao().deleteFakeChannelMessages()
+        database.postDao().deleteFakePosts()
 
         // Ensure Current User exists
         if (database.userDao().getCurrentUserOnce() == null) {
@@ -309,124 +312,6 @@ class ChatRepository(
                 isCurrentUser = true
             )
             database.userDao().insertOrUpdateUser(currentUser)
-        }
-
-        // Seed channels if empty
-        try {
-            val channelCount = database.channelDao().getChannelById("channel_pulse_news")
-            if (channelCount == null) {
-                val seedChannels = listOf(
-                    ChannelEntity(
-                        id = "channel_pulse_news",
-                        name = "Pulse Official News ⚡",
-                        description = "Official broadcast channel for Pulse Chat updates, features, and system announcements.",
-                        creatorId = "usr_system",
-                        creatorName = "Pulse System",
-                        avatarUrl = "https://picsum.photos/seed/pulsenews/300/300",
-                        followerCount = 1250,
-                        isFollowedByMe = true,
-                        lastMessageText = "We have launched the Channels & Global Post feature! 🚀",
-                        lastMessageTimestamp = System.currentTimeMillis() - 3600000
-                    ),
-                    ChannelEntity(
-                        id = "channel_compose_art",
-                        name = "Jetpack Compose Showcase 🎨",
-                        description = "Daily doses of pure UI inspiration, glassmorphism templates, and Material 3 design systems.",
-                        creatorId = "usr_elena",
-                        creatorName = "Elena Rostova",
-                        avatarUrl = "https://picsum.photos/seed/composeart/300/300",
-                        followerCount = 4500,
-                        isFollowedByMe = false,
-                        lastMessageText = "Checkout this amazing Glassmorphic floating card animation!",
-                        lastMessageTimestamp = System.currentTimeMillis() - 7200000
-                    ),
-                    ChannelEntity(
-                        id = "channel_erlang_otp",
-                        name = "Erlang/OTP Clustering 🌐",
-                        description = "Deep dive into distributed systems, low-latency WebSockets, and BEAM performance optimization.",
-                        creatorId = "usr_alex",
-                        creatorName = "Alex Rivera",
-                        avatarUrl = "https://picsum.photos/seed/erlangotp/300/300",
-                        followerCount = 890,
-                        isFollowedByMe = false,
-                        lastMessageText = "Clustering setup completed across 4 geographic regions.",
-                        lastMessageTimestamp = System.currentTimeMillis() - 14400000
-                    )
-                )
-                database.channelDao().insertChannels(seedChannels)
-
-                // Seed channel messages
-                database.channelMessageDao().insertMessages(listOf(
-                    ChannelMessageEntity(
-                        id = "chan_msg_1",
-                        channelId = "channel_pulse_news",
-                        senderId = "usr_system",
-                        senderName = "Pulse System",
-                        content = "Welcome to the Pulse Official News Channel! Keep up to date with low-latency upgrades and OTP cluster releases.",
-                        timestamp = System.currentTimeMillis() - 7200000,
-                        mediaType = "TEXT"
-                    ),
-                    ChannelMessageEntity(
-                        id = "chan_msg_2",
-                        channelId = "channel_pulse_news",
-                        senderId = "usr_system",
-                        senderName = "Pulse System",
-                        content = "We have launched the Channels & Global Post feature! 🚀 Now you can share photos, documents, and talk with unlimited followers.",
-                        timestamp = System.currentTimeMillis() - 3600000,
-                        mediaType = "TEXT"
-                    )
-                ))
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("ChatRepository", "Error seeding channels: ${e.message}")
-        }
-
-        // Seed posts if empty
-        try {
-            val postCount = database.postDao().getAllPosts()
-            val existingSeedPost = database.postDao().getAllPosts()
-            // Just insert the posts, they use REPLACE onConflict so it's totally safe to insert unconditionally
-            val seedPosts = listOf(
-                PostEntity(
-                    id = "seed_post_irfan",
-                    userId = "usr_google_irfan_9075",
-                    userName = "Mohammad Irfan Khan",
-                    userAvatar = "https://picsum.photos/seed/irfan/300/300",
-                    content = "Just finalized the layout for the brand new GlassmorphicFloatingNavigationBar in Compose. Highly fluid, spring-bouncy, and matches the dynamic theme options perfectly! Let me know what you think of the new launcher logo too! 👇✨",
-                    mediaUrl = "https://picsum.photos/seed/computercode/800/600",
-                    mediaType = "IMAGE",
-                    timestamp = System.currentTimeMillis() - 1800000,
-                    likesCount = 42,
-                    isLikedByMe = true
-                ),
-                PostEntity(
-                    id = "seed_post_elena",
-                    userId = "usr_elena",
-                    userName = "Elena Rostova",
-                    userAvatar = "https://picsum.photos/seed/elena/300/300",
-                    content = "Enjoying a quiet, warm cup of coffee while reviewing Erlang OTP distributed cluster node logs. Low-latency is beautiful when done correctly! ☕📈 Check out my configuration file attached below.",
-                    mediaUrl = "https://picsum.photos/seed/coffeedev/800/600",
-                    mediaType = "IMAGE",
-                    timestamp = System.currentTimeMillis() - 5400000,
-                    likesCount = 28,
-                    isLikedByMe = false
-                ),
-                PostEntity(
-                    id = "seed_post_alex",
-                    userId = "usr_alex",
-                    userName = "Alex Rivera",
-                    userAvatar = "https://picsum.photos/seed/alex/300/300",
-                    content = "Building highly scalable Kotlin Multiplatform engines for local-first databases today. Decoupling storage logic from UI state makes Compose rendering exceptionally smooth. Check out the repository structure diagram! ⚡💻",
-                    mediaUrl = "https://picsum.photos/seed/kotlinart/800/600",
-                    mediaType = "IMAGE",
-                    timestamp = System.currentTimeMillis() - 12000000,
-                    likesCount = 56,
-                    isLikedByMe = false
-                )
-            )
-            database.postDao().insertPosts(seedPosts)
-        } catch (e: Exception) {
-            android.util.Log.e("ChatRepository", "Error seeding posts: ${e.message}")
         }
     }
 }

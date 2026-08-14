@@ -57,6 +57,14 @@ class FirestoreService {
      * Resolves a unique username handle to its registered email address.
      */
     suspend fun getEmailByUsername(username: String): String? {
+        val user = getUserByUsername(username)
+        return user?.email
+    }
+
+    /**
+     * Resolves a unique username handle to its UserEntity.
+     */
+    suspend fun getUserByUsername(username: String): UserEntity? {
         val db = firestore ?: return null
         val cleanUsername = username.lowercase().removePrefix("@").trim()
         if (cleanUsername.isBlank()) return null
@@ -65,17 +73,12 @@ class FirestoreService {
             val usernameSnapshot = db.collection("usernames").document(cleanUsername).get().await()
             if (usernameSnapshot.exists()) {
                 val userId = usernameSnapshot.getString("userId") ?: return null
-                val userSnapshot = db.collection("users").document(userId).get().await()
-                if (userSnapshot.exists()) {
-                    userSnapshot.getString("email")
-                } else {
-                    null
-                }
+                getUser(userId)
             } else {
                 null
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error resolving email from username: ${e.message}")
+            Log.e(TAG, "Error resolving user from username: ${e.message}")
             null
         }
     }

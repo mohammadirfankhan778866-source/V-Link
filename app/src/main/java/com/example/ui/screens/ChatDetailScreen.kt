@@ -103,13 +103,19 @@ fun ChatDetailScreen(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
-                            Text(
-                                text = chat?.title ?: "Chat",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = chat?.title ?: "Chat",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (chat?.isPremium == true) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(Icons.Default.Star, contentDescription = "Premium", tint = Color(0xFFFFC107), modifier = Modifier.size(14.dp))
+                                }
+                            }
                             val handleText = if (!chat?.username.isNullOrEmpty()) {
                                 if (chat?.username!!.startsWith("@")) chat?.username!! else "@${chat?.username}"
                             } else if (chat?.isGroup == false && chat?.title != null) {
@@ -135,24 +141,59 @@ fun ChatDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        val isGroup = chat?.isGroup == true
-                        if (isGroup) {
-                            viewModel.startGroupCall(chat?.title ?: "Group", chat?.avatarUrl ?: "", true)
-                        } else {
-                            viewModel.startCall(chat?.title ?: "Contact", chat?.avatarUrl ?: "", true)
-                        }
-                    }) {
-                        Icon(Icons.Default.Videocam, contentDescription = "Video Call")
+                    var showCallDialog by remember { mutableStateOf(false) }
+                    
+                    if (showCallDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showCallDialog = false },
+                            title = { Text("Call ${chat?.title ?: "Contact"}") },
+                            text = { Text("Choose call type:") },
+                            confirmButton = {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = {
+                                            val isGroup = chat?.isGroup == true
+                                            if (isGroup) {
+                                                viewModel.startGroupCall(chat?.title ?: "Group", chat?.avatarUrl ?: "", false)
+                                            } else {
+                                                viewModel.startCall(chat?.title ?: "Contact", chat?.avatarUrl ?: "", false, chat?.username ?: "")
+                                            }
+                                            showCallDialog = false
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                                    ) {
+                                        Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Call")
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            val isGroup = chat?.isGroup == true
+                                            if (isGroup) {
+                                                viewModel.startGroupCall(chat?.title ?: "Group", chat?.avatarUrl ?: "", true)
+                                            } else {
+                                                viewModel.startCall(chat?.title ?: "Contact", chat?.avatarUrl ?: "", true, chat?.username ?: "")
+                                            }
+                                            showCallDialog = false
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                                    ) {
+                                        Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Video Call")
+                                    }
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showCallDialog = false }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        )
                     }
-                    IconButton(onClick = {
-                        val isGroup = chat?.isGroup == true
-                        if (isGroup) {
-                            viewModel.startGroupCall(chat?.title ?: "Group", chat?.avatarUrl ?: "", false)
-                        } else {
-                            viewModel.startCall(chat?.title ?: "Contact", chat?.avatarUrl ?: "", false)
-                        }
-                    }) {
+
+                    IconButton(onClick = { showCallDialog = true }) {
                         Icon(Icons.Default.Call, contentDescription = "Voice Call")
                     }
                     Box {
@@ -284,30 +325,106 @@ fun ChatDetailScreen(
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { showAttachmentSheet = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Attach", tint = PulseGreen)
+                        if (!isRecordingVoiceNote) {
+                            OutlinedTextField(
+                                value = inputText,
+                                onValueChange = { inputText = it },
+                                placeholder = { Text("Message...", fontSize = 14.sp) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("message_input_field"),
+                                shape = RoundedCornerShape(24.dp),
+                                maxLines = 4,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color.Transparent,
+                                    unfocusedBorderColor = Color.Transparent,
+                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                leadingIcon = {
+                                    IconButton(onClick = { /* Emoji */ }) {
+                                        Icon(Icons.Default.Face, contentDescription = "Emoji", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                },
+                                trailingIcon = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(onClick = { showAttachmentSheet = true }) {
+                                            Icon(
+                                                imageVector = Icons.Default.AttachFile,
+                                                contentDescription = "Attach",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        if (inputText.isBlank()) {
+                                            IconButton(onClick = { 
+                                                viewModel.sendMessage(chatId, "Camera Photo", MessageType.IMAGE, "https://picsum.photos/seed/camera/800/600")
+                                            }) {
+                                                Icon(
+                                                    imageVector = Icons.Default.CameraAlt,
+                                                    contentDescription = "Camera",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+
+                            Spacer(modifier = Modifier.width(6.dp))
                         }
 
-                        OutlinedTextField(
-                            value = inputText,
-                            onValueChange = { inputText = it },
-                            placeholder = { Text("Message...", fontSize = 14.sp) },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("message_input_field"),
-                            shape = RoundedCornerShape(24.dp),
-                            maxLines = 4,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = PulseGreen,
-                                unfocusedBorderColor = Color.Transparent,
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                            )
-                        )
+                        if (isRecordingVoiceNote) {
+                            var recordSeconds by remember { mutableIntStateOf(0) }
+                            LaunchedEffect(isRecordingVoiceNote) {
+                                while (isRecordingVoiceNote) {
+                                    kotlinx.coroutines.delay(1000)
+                                    recordSeconds++
+                                }
+                            }
 
-                        Spacer(modifier = Modifier.width(6.dp))
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .clip(CircleShape)
+                                        .background(CallEndRed)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = String.format(Locale.getDefault(), "Recording... %02d:%02d", recordSeconds / 60, recordSeconds % 60),
+                                    color = CallEndRed,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                                Spacer(modifier = Modifier.weight(1f))
+                                IconButton(onClick = { isRecordingVoiceNote = false }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Cancel Recording", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
 
-                        if (inputText.isNotBlank()) {
+                            IconButton(
+                                onClick = {
+                                    val durationStr = String.format(Locale.getDefault(), "%02d:%02d", recordSeconds / 60, recordSeconds % 60)
+                                    viewModel.sendMessage(
+                                        chatId = chatId,
+                                        content = "Voice note ($durationStr)",
+                                        type = MessageType.VOICE_NOTE,
+                                        mediaUrl = "audio_sample.mp3"
+                                    )
+                                    isRecordingVoiceNote = false
+                                },
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .background(PulseGreen, CircleShape)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send Voice Note", tint = Color.White)
+                            }
+                        } else if (inputText.isNotBlank()) {
                             IconButton(
                                 onClick = {
                                     viewModel.sendMessage(chatId, inputText.trim())
@@ -323,13 +440,7 @@ fun ChatDetailScreen(
                         } else {
                             IconButton(
                                 onClick = {
-                                    // Send voice note simulation
-                                    viewModel.sendMessage(
-                                        chatId = chatId,
-                                        content = "Voice note (0:08)",
-                                        type = MessageType.VOICE_NOTE,
-                                        mediaUrl = "audio_sample.mp3"
-                                    )
+                                    isRecordingVoiceNote = true
                                 },
                                 modifier = Modifier
                                     .size(44.dp)
@@ -352,25 +463,40 @@ fun ChatDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         Text("Share Media", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceAround
-                        ) {
-                            AttachmentOptionItem("Gallery", Icons.Default.Image, PulseGreen) {
-                                viewModel.sendMessage(chatId, "Shared Image", MessageType.IMAGE, "https://picsum.photos/seed/sharedimg/800/600")
-                                showAttachmentSheet = false
+                        Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceAround
+                            ) {
+                                AttachmentOptionItem("Document", Icons.Default.Description, Color(0xFF5F66CD)) {
+                                    viewModel.sendMessage(chatId, "Project_Architecture_v2.pdf", MessageType.DOCUMENT, "doc.pdf")
+                                    showAttachmentSheet = false
+                                }
+                                AttachmentOptionItem("Camera", Icons.Default.CameraAlt, Color(0xFFD3396D)) {
+                                    viewModel.sendMessage(chatId, "Camera Photo", MessageType.IMAGE, "https://picsum.photos/seed/camera/800/600")
+                                    showAttachmentSheet = false
+                                }
+                                AttachmentOptionItem("Gallery", Icons.Default.Image, Color(0xFF007BF5)) {
+                                    viewModel.sendMessage(chatId, "Shared Image", MessageType.IMAGE, "https://picsum.photos/seed/sharedimg/800/600")
+                                    showAttachmentSheet = false
+                                }
                             }
-                            AttachmentOptionItem("Document", Icons.Default.Description, Color(0xFF10B981)) {
-                                viewModel.sendMessage(chatId, "Project_Architecture_v2.pdf", MessageType.DOCUMENT, "doc.pdf")
-                                showAttachmentSheet = false
-                            }
-                            AttachmentOptionItem("Audio", Icons.Default.Headphones, Color(0xFFF59E0B)) {
-                                viewModel.sendMessage(chatId, "Voice note (0:15)", MessageType.VOICE_NOTE, "audio.mp3")
-                                showAttachmentSheet = false
-                            }
-                            AttachmentOptionItem("Location", Icons.Default.LocationOn, Color(0xFFEF4444)) {
-                                viewModel.sendMessage(chatId, "📍 Live Location: San Francisco, CA")
-                                showAttachmentSheet = false
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceAround
+                            ) {
+                                AttachmentOptionItem("Audio", Icons.Default.Headphones, Color(0xFFF26522)) {
+                                    viewModel.sendMessage(chatId, "Voice note (0:15)", MessageType.VOICE_NOTE, "audio.mp3")
+                                    showAttachmentSheet = false
+                                }
+                                AttachmentOptionItem("Location", Icons.Default.LocationOn, Color(0xFF10B981)) {
+                                    viewModel.sendMessage(chatId, "📍 Live Location: San Francisco, CA")
+                                    showAttachmentSheet = false
+                                }
+                                AttachmentOptionItem("Contact", Icons.Default.Person, Color(0xFF00A2D3)) {
+                                    viewModel.sendMessage(chatId, "Contact: John Doe")
+                                    showAttachmentSheet = false
+                                }
                             }
                         }
                     }

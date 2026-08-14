@@ -481,6 +481,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    suspend fun startCallWithValidation(username: String, isVideo: Boolean): Pair<Boolean, String> {
+        val cleanUsername = if (username.trim().startsWith("@")) username.trim().lowercase() else "@${username.trim().lowercase()}"
+        if (cleanUsername.length <= 1) {
+            return Pair(false, "Please enter a valid username handle")
+        }
+
+        return withContext(Dispatchers.IO) {
+            val firestoreUser = firestoreService.getUserByUsername(cleanUsername)
+            val userToCall = if (firestoreUser != null) {
+                firestoreUser
+            } else {
+                val localContacts = repository.database.userDao().getAllUsersOnce()
+                localContacts.firstOrNull { it.username.equals(cleanUsername, ignoreCase = true) }
+            }
+
+            if (userToCall == null) {
+                return@withContext Pair(false, "User $cleanUsername does not exist on V-Link")
+            }
+
+            withContext(Dispatchers.Main) {
+                startCall(
+                    contactName = userToCall.displayName,
+                    contactAvatar = userToCall.profilePictureUrl,
+                    isVideo = isVideo,
+                    contactUsername = userToCall.username
+                )
+            }
+            return@withContext Pair(true, "Calling ${userToCall.displayName}")
+        }
+    }
+
     fun startGroupCall(groupTitle: String, groupAvatar: String, isVideo: Boolean) {
         val call = CallLogEntity(
             id = "gcall_" + System.currentTimeMillis(),
@@ -719,27 +750,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         repository.database.userDao().insertOrUpdateUser(userEntity.copy(isCurrentUser = true))
                         sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", userEntity)
                         return@withContext true
+                    } else {
+                        // Real authentication failed (e.g. wrong password or user not found)
+                        return@withContext false
                     }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("MainViewModel", "Real Firebase login failed: ${e.message}")
-            }
-
-            // Fallback for local Room DB / sandbox login
-            try {
-                val allUsers = repository.database.userDao().getAllUsersOnce()
-                val match = allUsers.firstOrNull {
-                    it.email.equals(input, ignoreCase = true) ||
-                    it.username.equals(if (input.startsWith("@")) input else "@$input", ignoreCase = true)
-                }
-                if (match != null) {
-                    val loggedInUser = match.copy(isCurrentUser = true)
-                    repository.database.userDao().insertOrUpdateUser(loggedInUser)
-                    sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", loggedInUser)
-                    return@withContext true
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Local DB check failed: ${e.message}")
             }
 
             return@withContext false
@@ -954,7 +971,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     authResult = authRepository.signInWithEmailAndPassword(cleanEmail, password)
                 }
 
-                val userId = authResult?.user?.uid ?: "usr_${cleanEmail.substringBefore("@").replace(".", "_")}_${cleanUsername.removePrefix("@")}"
+                if (authResult == null || authResult.user == null) {
+                    // Password was wrong or registration failed
+                    return@withContext false
+                }
+
+                val userId = authResult.user!!.uid
 
                 val user = UserEntity(
                     id = userId,
@@ -981,29 +1003,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             } catch (e: Exception) {
                 android.util.Log.e("MainViewModel", "Firebase registration warning: ${e.message}")
-            }
-
-            // Fallback user creation if Firebase Auth is in sandbox mode
-            try {
-                val userId = "usr_${cleanEmail.substringBefore("@").replace(".", "_")}_${cleanUsername.removePrefix("@")}"
-                val user = UserEntity(
-                    id = userId,
-                    displayName = displayName,
-                    username = cleanUsername,
-                    email = cleanEmail,
-                    profilePictureUrl = "https://picsum.photos/seed/${cleanUsername.removePrefix("@")}/300/300",
-                    bio = "Connecting via V-Link ⚡",
-                    onlineStatus = "ONLINE",
-                    isCurrentUser = true,
-                    emailVerified = true,
-                    authProvider = "email"
-                )
-
-                repository.database.userDao().insertOrUpdateUser(user)
-                sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", user)
-                return@withContext true
-            } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Local DB user creation error: ${e.message}")
                 return@withContext false
             }
         }
@@ -1030,6 +1029,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 statusPrivacyMode = mode,
                 statusPrivacyList = list
             )
+            repository.database.userDao().insertOrUpdateUser(updatedUser)
+        }
+    }
+
+    fun upgradeToPremium() {
+        viewModelScope.launch {
+            val user = currentUser.value ?: return@launch
+            val updatedUser = user.copy(isPremium = true)
             repository.database.userDao().insertOrUpdateUser(updatedUser)
         }
     }

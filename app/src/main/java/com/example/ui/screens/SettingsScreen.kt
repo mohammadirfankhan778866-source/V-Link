@@ -111,11 +111,17 @@ fun SettingsScreen(viewModel: MainViewModel) {
                     Spacer(modifier = Modifier.width(16.dp))
 
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = currentUser?.displayName ?: "Mohammad Irfan Khan",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = currentUser?.displayName ?: "Mohammad Irfan Khan",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (currentUser?.isPremium == true) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(Icons.Default.Star, contentDescription = "Premium User", tint = Color(0xFFFFC107), modifier = Modifier.size(16.dp))
+                            }
+                        }
                         Text(
                             text = currentUser?.bio ?: "Hey there! I am using Pulse Chat ⚡",
                             fontSize = 13.sp,
@@ -195,6 +201,122 @@ fun SettingsScreen(viewModel: MainViewModel) {
                     }
                     Icon(Icons.Default.ChevronRight, contentDescription = null)
                 }
+            }
+
+            // More WhatsApp-Like Settings Options
+            var showPremiumModal by remember { mutableStateOf(false) }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+            ) {
+                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    SettingsRow(icon = Icons.Outlined.Key, title = "Account", subtitle = "Privacy, security, change number") {
+                        showStatusPrivacyModal = true
+                    }
+                    SettingsRow(icon = Icons.Outlined.Face, title = "Avatar", subtitle = "Create, edit, profile photo") {
+                        showEditProfileModal = true
+                    }
+                    SettingsRow(icon = Icons.Outlined.ChatBubbleOutline, title = "Chats", subtitle = "Theme, wallpapers, chat history", onClick = {})
+                    SettingsRow(icon = Icons.Outlined.Notifications, title = "Notifications", subtitle = "Message, group & call tones", onClick = {})
+                    SettingsRow(icon = Icons.Outlined.HelpOutline, title = "Help", subtitle = "Help center, contact us, privacy policy", onClick = {})
+                }
+            }
+
+            // Premium Card
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showPremiumModal = true },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFD700).copy(alpha = 0.2f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFC107), modifier = Modifier.size(32.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text("Get Premium", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFFB8860B))
+                            Text("Unlock verified star & exclusive features", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color(0xFFB8860B))
+                }
+            }
+
+            // Premium Modal
+            if (showPremiumModal) {
+                var premiumUsername by remember { mutableStateOf("") }
+                var premiumPassword by remember { mutableStateOf("") }
+                var premiumError by remember { mutableStateOf("") }
+
+                AlertDialog(
+                    onDismissRequest = { showPremiumModal = false },
+                    title = { 
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFC107))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Upgrade to Premium", fontWeight = FontWeight.Bold) 
+                        }
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                "Premium costs Rs 50/month. For now, enjoy a 1-month FREE tier!\nGet a verified star (⭐) next to your nickname just like Instagram.",
+                                fontSize = 13.sp
+                            )
+                            
+                            OutlinedTextField(
+                                value = premiumUsername,
+                                onValueChange = { premiumUsername = it; premiumError = "" },
+                                label = { Text("Username") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            
+                            OutlinedTextField(
+                                value = premiumPassword,
+                                onValueChange = { premiumPassword = it; premiumError = "" },
+                                label = { Text("Password") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                            )
+
+                            if (premiumError.isNotEmpty()) {
+                                Text(premiumError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (premiumUsername.isBlank() || premiumPassword.isBlank()) {
+                                    premiumError = "Please enter both username and password to agree."
+                                } else {
+                                    viewModel.upgradeToPremium()
+                                    showPremiumModal = false
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107))
+                        ) {
+                            Text("Agree & Upgrade", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showPremiumModal = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
             }
 
             // Security & Session Info
@@ -544,5 +666,23 @@ fun RowScope.ThemeOptionButton(title: String, isSelected: Boolean, onClick: () -
         shape = RoundedCornerShape(12.dp)
     ) {
         Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+    }
+}
+
+@Composable
+fun SettingsRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.width(16.dp))
+        Column {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(subtitle, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }

@@ -313,15 +313,21 @@ fun ChatItemRow(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Nick Name Bolded
-                Text(
-                    text = chat.title,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = chat.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (chat.isPremium) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(Icons.Default.Star, contentDescription = "Premium", tint = Color(0xFFFFC107), modifier = Modifier.size(14.dp))
+                    }
+                }
 
                 Text(
                     text = formattedTime,

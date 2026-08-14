@@ -177,6 +177,9 @@ interface ChannelDao {
 
     @Query("DELETE FROM channels WHERE id = :channelId")
     suspend fun deleteChannel(channelId: String)
+
+    @Query("DELETE FROM channels WHERE id IN ('channel_pulse_news', 'channel_compose_art', 'channel_erlang_otp')")
+    suspend fun deleteFakeChannels()
 }
 
 @Dao
@@ -189,6 +192,9 @@ interface ChannelMessageDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessages(messages: List<ChannelMessageEntity>)
+
+    @Query("DELETE FROM channel_messages WHERE channelId IN ('channel_pulse_news', 'channel_compose_art', 'channel_erlang_otp')")
+    suspend fun deleteFakeChannelMessages()
 }
 
 @Dao
@@ -204,6 +210,9 @@ interface PostDao {
 
     @Query("UPDATE posts SET isLikedByMe = :liked, likesCount = likesCount + :countChange WHERE id = :postId")
     suspend fun updateLikeState(postId: String, liked: Boolean, countChange: Int)
+
+    @Query("DELETE FROM posts WHERE id IN ('seed_post_irfan', 'seed_post_elena', 'seed_post_alex')")
+    suspend fun deleteFakePosts()
 }
 
 @Database(
@@ -217,7 +226,7 @@ interface PostDao {
         ChannelMessageEntity::class,
         PostEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class PulseDatabase : RoomDatabase() {
@@ -234,6 +243,18 @@ abstract class PulseDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: PulseDatabase? = null
 
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE users ADD COLUMN isPremium INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE chats ADD COLUMN isPremium INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE messages ADD COLUMN isPremium INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE status_stories ADD COLUMN isPremium INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE call_logs ADD COLUMN isPremium INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE channels ADD COLUMN isPremium INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE posts ADD COLUMN isPremium INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): PulseDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -241,6 +262,7 @@ abstract class PulseDatabase : RoomDatabase() {
                     PulseDatabase::class.java,
                     "pulse_chat_database"
                 )
+                    .addMigrations(MIGRATION_3_4)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

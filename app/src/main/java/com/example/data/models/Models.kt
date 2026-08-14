@@ -38,7 +38,8 @@ data class UserEntity(
     val channelProfilePictureUrl: String = "",
     val channelAlias: String = "",
     val statusPrivacyMode: String = "PUBLIC",
-    val statusPrivacyList: String = ""
+    val statusPrivacyList: String = "",
+    val isPremium: Boolean = false
 )
 
 @Entity(tableName = "chats")
@@ -55,7 +56,8 @@ data class ChatEntity(
     val isArchived: Boolean = false,
     val wallpaperTheme: String = "DEFAULT",
     val typingStatus: String = "", // e.g. "typing..." or ""
-    val memberCount: Int = 1
+    val memberCount: Int = 1,
+    val isPremium: Boolean = false
 )
 
 @Entity(tableName = "messages")
@@ -78,7 +80,8 @@ data class MessageEntity(
     val isStarred: Boolean = false,
     val isDeletedForEveryone: Boolean = false,
     val isDeletedForMe: Boolean = false,
-    val reactions: String = "" // e.g. "❤️,👍"
+    val reactions: String = "", // e.g. "❤️,👍"
+    val isPremium: Boolean = false
 )
 
 @Entity(tableName = "status_stories")
@@ -91,7 +94,8 @@ data class StatusStoryEntity(
     val caption: String,
     val timestamp: Long = System.currentTimeMillis(),
     val isViewed: Boolean = false,
-    val isMine: Boolean = false
+    val isMine: Boolean = false,
+    val isPremium: Boolean = false
 )
 
 @Entity(tableName = "call_logs")
@@ -105,7 +109,8 @@ data class CallLogEntity(
     val isIncoming: Boolean = true,
     val isMissed: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
-    val durationSeconds: Int = 0
+    val durationSeconds: Int = 0,
+    val isPremium: Boolean = false
 )
 
 @Entity(tableName = "channels")
@@ -120,7 +125,8 @@ data class ChannelEntity(
     val isFollowedByMe: Boolean = false,
     val lastMessageText: String = "",
     val lastMessageTimestamp: Long = System.currentTimeMillis(),
-    val visibility: String = "PUBLIC" // PUBLIC, FRIENDS_ONLY
+    val visibility: String = "PUBLIC", // PUBLIC, FRIENDS_ONLY
+    val isPremium: Boolean = false
 )
 
 @Entity(tableName = "channel_messages")
@@ -152,7 +158,8 @@ data class PostEntity(
     val isLikedByMe: Boolean = false,
     val fileExtension: String = "",
     val fileSize: String = "",
-    val visibility: String = "PUBLIC" // PUBLIC, FRIENDS_ONLY
+    val visibility: String = "PUBLIC", // PUBLIC, FRIENDS_ONLY
+    val isPremium: Boolean = false
 )
 
 data class AdminAnalytics(

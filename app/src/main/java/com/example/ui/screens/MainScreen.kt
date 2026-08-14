@@ -44,7 +44,8 @@ fun MainScreen(viewModel: MainViewModel) {
         )
     } else {
         Scaffold(
-            modifier = Modifier.systemBarsPadding(),
+            modifier = Modifier.fillMaxSize(),
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
             bottomBar = {
                 GlassmorphicFloatingNavigationBar(
                     currentTab = currentTab,

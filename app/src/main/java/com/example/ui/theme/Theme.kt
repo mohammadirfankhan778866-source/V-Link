@@ -86,12 +86,20 @@ fun PulseChatTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.surface.toArgb()
-            window.navigationBarColor = colorScheme.surface.toArgb()
-            WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars = !isDark
-                isAppearanceLightNavigationBars = !isDark
+            var context = view.context
+            while (context is android.content.ContextWrapper) {
+                if (context is Activity) break
+                context = context.baseContext
+            }
+            if (context is Activity) {
+                val window = context.window
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                WindowCompat.setDecorFitsSystemWindows(window, false)
+                WindowCompat.getInsetsController(window, view).apply {
+                    isAppearanceLightStatusBars = !isDark
+                    isAppearanceLightNavigationBars = !isDark
+                }
             }
         }
     }
