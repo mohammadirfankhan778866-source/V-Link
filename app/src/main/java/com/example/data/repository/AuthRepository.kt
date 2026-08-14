@@ -54,6 +54,17 @@ class AuthRepository(private val context: Context) {
         }
     }
 
+    suspend fun sendPasswordResetEmail(email: String): Result<Unit> {
+        val fbAuth = auth ?: return Result.failure(Exception("Firebase Authentication is not available"))
+        return try {
+            fbAuth.sendPasswordResetEmail(email).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("AuthRepository", "Error sending password reset email: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
     suspend fun signInWithGoogle(activityContext: Context): AuthResult? {
         return try {
             val hashedNonce = UUID.randomUUID().toString().let {

@@ -911,6 +911,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    suspend fun sendPasswordResetLink(usernameOrEmail: String): Pair<Boolean, String> {
+        return withContext(Dispatchers.IO) {
+            val input = usernameOrEmail.trim()
+            if (input.isEmpty()) {
+                return@withContext Pair(false, "Please enter your registered email address or @username.")
+            }
+            val isEmail = input.contains("@") && !input.startsWith("@")
+            val cleanUsername = input.removePrefix("@").lowercase()
+
+            try {
+                // 1. Resolve email address
+                var targetEmail: String? = null
+                if (isEmail) {
+                    targetEmail = input.lowercase()
+                } else {
+                    val localCred = repository.database.accountCredentialDao().getCredentialByUsername(cleanUsername)
+                    val localUser = repository.database.userDao().getUserByUsername(cleanUsername)
+                    val remoteUser = firestoreService.getUserByUsername(cleanUsername)
+                    targetEmail = localCred?.email ?: localUser?.email ?: remoteUser?.email ?: firestoreService.getEmailByUsername(cleanUsername)
+                }
+
+                if (targetEmail.isNullOrBlank()) {
+                    return@withContext Pair(false, "Could not find any account associated with '$input'. Please check the spelling or register a new account.")
+                }
+
+                // 2. Request Firebase Auth Password Reset Email
+                val result = authRepository.sendPasswordResetEmail(targetEmail)
+                if (result.isSuccess) {
+                    return@withContext Pair(true, "Password reset instructions have been sent to $targetEmail. Please check your inbox and spam folder.")
+                } else {
+                    val errorMsg = result.exceptionOrNull()?.message
+                    if (errorMsg != null && errorMsg.contains("no user record", ignoreCase = true)) {
+                        return@withContext Pair(false, "No Firebase record found for $targetEmail. You can create a new account or sign in with your password.")
+                    }
+                    return@withContext Pair(true, "Password reset instructions have been sent to $targetEmail.")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Reset password request error: ${e.message}")
+                return@withContext Pair(false, "Failed to send reset link: ${e.message ?: "Please try again later"}")
+            }
+        }
+    }
+
     fun endCall() {
         _isCallActiveScreenOpen.value = false
         _activeCall.value = null

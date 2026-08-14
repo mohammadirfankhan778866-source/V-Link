@@ -202,6 +202,23 @@ class FirestoreService {
         }
     }
 
+    suspend fun updatePassword(userId: String, passwordHash: String, passwordSalt: String): Boolean {
+        val db = firestore ?: return true
+        return try {
+            db.collection("users").document(userId).update(
+                mapOf(
+                    "passwordHash" to passwordHash,
+                    "passwordSalt" to passwordSalt,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+            ).await()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating password in Firestore: ${e.message}")
+            false
+        }
+    }
+
     suspend fun getUser(userId: String): UserEntity? {
         val db = firestore ?: return null
         return try {

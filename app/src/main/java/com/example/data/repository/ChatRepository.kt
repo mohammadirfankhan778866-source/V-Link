@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import android.content.Context
 import com.example.data.db.PulseDatabase
 import com.example.data.models.*
 import com.example.data.network.PulseWebSocketService
@@ -13,6 +14,7 @@ data class ReactionItem(
 )
 
 class ChatRepository(
+    val context: Context,
     val database: PulseDatabase,
     val webSocketService: PulseWebSocketService
 ) {
@@ -323,7 +325,16 @@ class ChatRepository(
     }
 
     suspend fun populateSeedDataIfEmpty() {
-        // Clean up legacy mock data
+        val prefs = context.getSharedPreferences("pulse_chat_seed_state", Context.MODE_PRIVATE)
+        val isResetDone = prefs.getBoolean("vlink_account_reset_v1_done", false)
+        if (!isResetDone) {
+            // Delete all previous temporary accounts as requested
+            database.clearAllTables()
+            database.userDao().deleteFakeUsers()
+            prefs.edit().putBoolean("vlink_account_reset_v1_done", true).apply()
+        }
+
+        // Clean up any remaining legacy mock data artifacts
         database.userDao().deleteFakeUsers()
         database.chatDao().deleteFakeChats()
         database.messageDao().deleteFakeMessages()
@@ -332,37 +343,5 @@ class ChatRepository(
         database.channelDao().deleteFakeChannels()
         database.channelMessageDao().deleteFakeChannelMessages()
         database.postDao().deleteFakePosts()
-
-        // Only create default user if there are no existing users or accounts anywhere in the database
-        val existingUsers = database.userDao().getAllUsersOnce()
-        val existingCredentials = database.accountCredentialDao().getAllCredentials()
-        if (existingUsers.isEmpty() && existingCredentials.isEmpty()) {
-            val salt = com.example.util.AuthCryptoUtils.generateSalt()
-            val passHash = com.example.util.AuthCryptoUtils.hashPassword("123456", salt)
-            val currentUser = UserEntity(
-                id = "usr_google_irfan_9075",
-                displayName = "Mohammad Irfan Khan",
-                username = "@irfankhan",
-                email = "mohammadirfankhan778866@gmail.com",
-                profilePictureUrl = "https://picsum.photos/seed/irfan/300/300",
-                bio = "Building high-performance Android systems ⚡",
-                onlineStatus = "ONLINE",
-                isCurrentUser = true,
-                emailVerified = true,
-                authProvider = "email"
-            )
-            database.userDao().insertOrUpdateUser(currentUser)
-            database.accountCredentialDao().insertCredential(
-                AccountCredentialEntity(
-                    id = currentUser.id,
-                    email = currentUser.email,
-                    username = currentUser.username,
-                    passwordHash = passHash,
-                    passwordSalt = salt,
-                    displayName = currentUser.displayName,
-                    profilePictureUrl = currentUser.profilePictureUrl
-                )
-            )
-        }
     }
 }

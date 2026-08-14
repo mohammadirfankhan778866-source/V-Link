@@ -16,7 +16,7 @@ class SessionManager(context: Context) {
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn
 
     private val _jwtToken = MutableStateFlow<String?>(
-        prefs.getString(KEY_JWT_TOKEN, null) ?: generateJwt("mohammadirfankhan778866@gmail.com")
+        if (prefs.getBoolean(KEY_IS_LOGGED_IN, false)) prefs.getString(KEY_JWT_TOKEN, null) else null
     )
     val jwtToken: StateFlow<String?> = _jwtToken
 

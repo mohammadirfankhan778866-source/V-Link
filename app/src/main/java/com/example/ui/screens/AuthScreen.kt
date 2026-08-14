@@ -61,6 +61,13 @@ fun AuthScreen(
     var registerPasswordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
 
+    // Forgot Password states
+    var showForgotPasswordDialog by remember { mutableStateOf(false) }
+    var forgotPasswordInput by remember { mutableStateOf("") }
+    var isSendingResetLink by remember { mutableStateOf(false) }
+    var forgotPasswordMessage by remember { mutableStateOf("") }
+    var forgotPasswordIsSuccess by remember { mutableStateOf(false) }
+
     var isCheckingUsername by remember { mutableStateOf(false) }
     var usernameStatusText by remember { mutableStateOf("") }
     var isUsernameAvailable by remember { mutableStateOf<Boolean?>(null) }
@@ -340,6 +347,28 @@ fun AuthScreen(
                                 enabled = !isSubmitting,
                                 modifier = Modifier.fillMaxWidth().testTag("login_back_password_input")
                             )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        forgotPasswordInput = if (loginBackHandleInput.isNotBlank()) loginBackHandleInput else ""
+                                        forgotPasswordMessage = ""
+                                        forgotPasswordIsSuccess = false
+                                        showForgotPasswordDialog = true
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "Forgot Password?",
+                                        color = VLinkCyan,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
 
                             if (loginBackErrorMessage.isNotEmpty()) {
                                 Surface(
@@ -650,5 +679,99 @@ fun AuthScreen(
                 }
             }
         }
+    }
+
+    if (showForgotPasswordDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isSendingResetLink) {
+                    showForgotPasswordDialog = false
+                }
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Reset Password", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Enter your registered email address or @username. We will send a secure password reset link directly to your email.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 18.sp
+                    )
+
+                    OutlinedTextField(
+                        value = forgotPasswordInput,
+                        onValueChange = {
+                            forgotPasswordInput = it
+                            forgotPasswordMessage = ""
+                        },
+                        label = { Text("Email or @username") },
+                        placeholder = { Text("e.g. name@domain.com or @irfan") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
+                        singleLine = true,
+                        enabled = !isSendingResetLink,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (forgotPasswordMessage.isNotEmpty()) {
+                        Surface(
+                            color = if (forgotPasswordIsSuccess) Color(0xFF1B5E20).copy(alpha = 0.2f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = forgotPasswordMessage,
+                                color = if (forgotPasswordIsSuccess) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onErrorContainer,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (forgotPasswordInput.isBlank()) {
+                            forgotPasswordMessage = "Please enter your email or username."
+                            forgotPasswordIsSuccess = false
+                            return@Button
+                        }
+                        isSendingResetLink = true
+                        forgotPasswordMessage = ""
+                        coroutineScope.launch {
+                            val result = viewModel.sendPasswordResetLink(forgotPasswordInput.trim())
+                            isSendingResetLink = false
+                            forgotPasswordIsSuccess = result.first
+                            forgotPasswordMessage = result.second
+                        }
+                    },
+                    enabled = !isSendingResetLink,
+                    colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                ) {
+                    if (isSendingResetLink) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Sending...")
+                    } else {
+                        Text("Send Reset Link", fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showForgotPasswordDialog = false },
+                    enabled = !isSendingResetLink
+                ) {
+                    Text("Close")
+                }
+            }
+        )
     }
 }

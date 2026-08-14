@@ -54,7 +54,7 @@ class PulseApplication : Application() {
         database = PulseDatabase.getDatabase(this)
         sessionManager = SessionManager(this)
         webSocketService = PulseWebSocketService(database)
-        chatRepository = ChatRepository(database, webSocketService)
+        chatRepository = ChatRepository(this, database, webSocketService)
         authRepository = com.example.data.repository.AuthRepository(this)
         chatDraftDataStore = com.example.data.datastore.ChatDraftDataStore(this)
 
