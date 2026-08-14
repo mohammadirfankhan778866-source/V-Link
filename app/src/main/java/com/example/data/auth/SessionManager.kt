@@ -25,6 +25,11 @@ class SessionManager(context: Context) {
     )
     val themeMode: StateFlow<AppThemeMode> = _themeMode
 
+    private val _showExactTimestamps = MutableStateFlow(
+        prefs.getBoolean(KEY_SHOW_EXACT_TIMESTAMPS, true)
+    )
+    val showExactTimestamps: StateFlow<Boolean> = _showExactTimestamps
+
     fun performGoogleSignIn(
         email: String = "mohammadirfankhan778866@gmail.com",
         displayName: String = "Mohammad Irfan Khan",
@@ -76,10 +81,13 @@ class SessionManager(context: Context) {
         prefs.edit().putString(KEY_USER_NAME, displayName).apply()
     }
 
+    fun getCurrentUserId(): String? = prefs.getString(KEY_USER_ID, null)
+
     fun logout() {
         prefs.edit()
             .putBoolean(KEY_IS_LOGGED_IN, false)
             .remove(KEY_JWT_TOKEN)
+            .remove(KEY_USER_ID)
             .apply()
         _isLoggedIn.value = false
         _jwtToken.value = null
@@ -88,6 +96,11 @@ class SessionManager(context: Context) {
     fun setThemeMode(mode: AppThemeMode) {
         prefs.edit().putString(KEY_THEME_MODE, mode.name).apply()
         _themeMode.value = mode
+    }
+
+    fun setShowExactTimestamps(show: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_EXACT_TIMESTAMPS, show).apply()
+        _showExactTimestamps.value = show
     }
 
     private fun generateJwt(email: String): String {
@@ -104,5 +117,6 @@ class SessionManager(context: Context) {
         private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_SHOW_EXACT_TIMESTAMPS = "show_exact_timestamps"
     }
 }

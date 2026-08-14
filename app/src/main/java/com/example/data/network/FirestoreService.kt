@@ -54,6 +54,63 @@ class FirestoreService {
     }
 
     /**
+     * Checks if an email is already in use by another user in Firestore.
+     */
+    suspend fun isEmailUnique(email: String): Boolean {
+        val db = firestore ?: return true
+        val cleanEmail = email.lowercase().trim()
+        if (cleanEmail.isBlank()) return false
+
+        return try {
+            val querySnapshot = db.collection("users")
+                .whereEqualTo("email", cleanEmail)
+                .limit(1)
+                .get()
+                .await()
+            querySnapshot.isEmpty
+        } catch (e: Exception) {
+            Log.w(TAG, "Firestore email check failed: ${e.message}")
+            true
+        }
+    }
+
+    /**
+     * Resolves a user by email address from Firestore.
+     */
+    suspend fun getUserByEmail(email: String): UserEntity? {
+        val db = firestore ?: return null
+        val cleanEmail = email.lowercase().trim()
+        if (cleanEmail.isBlank()) return null
+
+        return try {
+            val querySnapshot = db.collection("users")
+                .whereEqualTo("email", cleanEmail)
+                .limit(1)
+                .get()
+                .await()
+            if (!querySnapshot.isEmpty) {
+                val doc = querySnapshot.documents[0]
+                UserEntity(
+                    id = doc.getString("id") ?: doc.id,
+                    displayName = doc.getString("displayName") ?: "",
+                    username = doc.getString("username") ?: "",
+                    email = doc.getString("email") ?: cleanEmail,
+                    profilePictureUrl = doc.getString("profilePictureUrl") ?: "",
+                    bio = doc.getString("bio") ?: "",
+                    emailVerified = doc.getBoolean("emailVerified") ?: false,
+                    authProvider = doc.getString("authProvider") ?: "email",
+                    isCurrentUser = true
+                )
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching user by email: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * Resolves a unique username handle to its registered email address.
      */
     suspend fun getEmailByUsername(username: String): String? {
@@ -86,7 +143,7 @@ class FirestoreService {
     /**
      * Saves a user account to Firestore and reserves their unique username.
      */
-    suspend fun registerUser(user: UserEntity): Boolean {
+    suspend fun registerUser(user: UserEntity, passwordHash: String = "", passwordSalt: String = ""): Boolean {
         val db = firestore ?: return true
         val cleanUsername = user.username.lowercase().removePrefix("@").trim()
 
@@ -106,22 +163,42 @@ class FirestoreService {
                     "createdAt" to System.currentTimeMillis()
                 ))
 
-                transaction.set(userRef, mapOf(
+                val userData = mutableMapOf<String, Any>(
                     "id" to user.id,
                     "displayName" to user.displayName,
                     "username" to "@$cleanUsername",
-                    "email" to user.email,
+                    "email" to user.email.lowercase().trim(),
                     "profilePictureUrl" to user.profilePictureUrl,
                     "bio" to user.bio,
                     "emailVerified" to user.emailVerified,
                     "authProvider" to user.authProvider,
                     "updatedAt" to System.currentTimeMillis()
-                ))
+                )
+                if (passwordHash.isNotBlank()) {
+                    userData["passwordHash"] = passwordHash
+                    userData["passwordSalt"] = passwordSalt
+                }
+
+                transaction.set(userRef, userData)
             }.await()
             true
         } catch (e: Exception) {
             Log.e(TAG, "Error registering user in Firestore: ${e.message}")
             false
+        }
+    }
+
+    suspend fun getPasswordCredentials(userId: String): Pair<String, String>? {
+        val db = firestore ?: return null
+        return try {
+            val snapshot = db.collection("users").document(userId).get().await()
+            if (snapshot.exists()) {
+                val hash = snapshot.getString("passwordHash") ?: ""
+                val salt = snapshot.getString("passwordSalt") ?: ""
+                if (hash.isNotBlank()) Pair(hash, salt) else null
+            } else null
+        } catch (e: Exception) {
+            null
         }
     }
 

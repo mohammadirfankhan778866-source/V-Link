@@ -116,6 +116,10 @@ class ChatRepository(
         return database.chatDao().getChatById(chatId)
     }
 
+    fun searchChats(query: String): Flow<List<ChatEntity>> {
+        return database.chatDao().searchChats(query)
+    }
+
     fun searchMessages(query: String): Flow<List<MessageEntity>> {
         return database.messageDao().searchMessages(query)
     }
@@ -144,12 +148,42 @@ class ChatRepository(
         database.chatDao().updatePinned(chatId, isPinned)
     }
 
+    suspend fun setTypingStatus(chatId: String, typingStatus: String) {
+        database.chatDao().updateTypingStatus(chatId, typingStatus)
+    }
+
+    suspend fun markChatAsRead(chatId: String, currentUserId: String = "usr_google_irfan_9075") {
+        database.messageDao().markIncomingMessagesAsRead(chatId, currentUserId)
+        database.chatDao().resetUnreadCount(chatId)
+    }
+
+    suspend fun editMessage(messageId: String, chatId: String, newContent: String) {
+        val now = System.currentTimeMillis()
+        database.messageDao().editMessage(messageId, newContent, now)
+        val chat = database.chatDao().getChatByIdOnce(chatId)
+        if (chat != null) {
+            database.chatDao().insertOrUpdateChat(chat.copy(lastMessageText = newContent))
+        }
+    }
+
+    suspend fun toggleAdminsOnlyMode(chatId: String, adminsOnly: Boolean) {
+        database.chatDao().updateAdminsOnlyMode(chatId, adminsOnly)
+    }
+
     suspend fun toggleArchiveChat(chatId: String, isArchived: Boolean) {
         database.chatDao().updateArchived(chatId, isArchived)
     }
 
     suspend fun updateWallpaper(chatId: String, wallpaper: String) {
         database.chatDao().updateWallpaper(chatId, wallpaper)
+    }
+
+    suspend fun toggleBlockUser(chatId: String, isBlocked: Boolean) {
+        database.chatDao().updateBlockedStatus(chatId, isBlocked)
+    }
+
+    suspend fun togglePinMessage(messageId: String, isPinned: Boolean) {
+        database.messageDao().updatePinned(messageId, isPinned)
     }
 
     suspend fun toggleStarMessage(messageId: String, isStarred: Boolean) {
@@ -289,7 +323,7 @@ class ChatRepository(
     }
 
     suspend fun populateSeedDataIfEmpty() {
-        // Remove any fake seed data if present in DB
+        // Clean up legacy mock data
         database.userDao().deleteFakeUsers()
         database.chatDao().deleteFakeChats()
         database.messageDao().deleteFakeMessages()
@@ -299,8 +333,12 @@ class ChatRepository(
         database.channelMessageDao().deleteFakeChannelMessages()
         database.postDao().deleteFakePosts()
 
-        // Ensure Current User exists
-        if (database.userDao().getCurrentUserOnce() == null) {
+        // Only create default user if there are no existing users or accounts anywhere in the database
+        val existingUsers = database.userDao().getAllUsersOnce()
+        val existingCredentials = database.accountCredentialDao().getAllCredentials()
+        if (existingUsers.isEmpty() && existingCredentials.isEmpty()) {
+            val salt = com.example.util.AuthCryptoUtils.generateSalt()
+            val passHash = com.example.util.AuthCryptoUtils.hashPassword("123456", salt)
             val currentUser = UserEntity(
                 id = "usr_google_irfan_9075",
                 displayName = "Mohammad Irfan Khan",
@@ -309,9 +347,22 @@ class ChatRepository(
                 profilePictureUrl = "https://picsum.photos/seed/irfan/300/300",
                 bio = "Building high-performance Android systems ⚡",
                 onlineStatus = "ONLINE",
-                isCurrentUser = true
+                isCurrentUser = true,
+                emailVerified = true,
+                authProvider = "email"
             )
             database.userDao().insertOrUpdateUser(currentUser)
+            database.accountCredentialDao().insertCredential(
+                AccountCredentialEntity(
+                    id = currentUser.id,
+                    email = currentUser.email,
+                    username = currentUser.username,
+                    passwordHash = passHash,
+                    passwordSalt = salt,
+                    displayName = currentUser.displayName,
+                    profilePictureUrl = currentUser.profilePictureUrl
+                )
+            )
         }
     }
 }

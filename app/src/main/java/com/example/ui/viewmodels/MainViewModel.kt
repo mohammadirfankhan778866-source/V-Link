@@ -29,11 +29,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val repository = app.chatRepository
     val sessionManager = app.sessionManager
     val authRepository = app.authRepository
+    val chatDraftDataStore = app.chatDraftDataStore
     val firestoreService = FirestoreService()
 
     val isLoggedIn = sessionManager.isLoggedIn
     val jwtToken = sessionManager.jwtToken
     val themeMode = sessionManager.themeMode
+    val showExactTimestamps = sessionManager.showExactTimestamps
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            val userId = sessionManager.getCurrentUserId()
+            if (userId != null && sessionManager.isLoggedIn.value) {
+                repository.database.userDao().setCurrentUser(userId)
+            }
+        }
+    }
 
     private val _tempGoogleUser = MutableStateFlow<TempGoogleUser?>(null)
     val tempGoogleUser: StateFlow<TempGoogleUser?> = _tempGoogleUser
@@ -80,21 +91,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeStatusViewer = MutableStateFlow<StatusStoryEntity?>(null)
     val activeStatusViewer: StateFlow<StatusStoryEntity?> = _activeStatusViewer
 
-    val chats: StateFlow<List<ChatEntity>> = combine(
-        repository.allChats,
-        _searchQuery,
-        _selectedFilter
-    ) { chatList, query, filter ->
-        chatList.filter { chat ->
-            val matchesQuery = query.isEmpty() || chat.title.contains(query, ignoreCase = true) || chat.lastMessageText.contains(query, ignoreCase = true)
-            val matchesFilter = when (filter) {
-                "Unread" -> chat.unreadCount > 0
-                "Groups" -> chat.isGroup
-                else -> !chat.isArchived
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val chats: StateFlow<List<ChatEntity>> = combine(_searchQuery, _selectedFilter) { q, f -> Pair(q, f) }
+        .flatMapLatest { (query, filter) ->
+            val sourceFlow = if (query.isEmpty()) repository.allChats else repository.searchChats(query)
+            sourceFlow.map { chatList ->
+                chatList.filter { chat ->
+                    val matchesFilter = when (filter) {
+                        "Unread" -> chat.unreadCount > 0
+                        "Groups" -> chat.isGroup
+                        else -> !chat.isArchived
+                    }
+                    matchesFilter
+                }
             }
-            matchesQuery && matchesFilter
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val contacts = repository.allContacts.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
@@ -123,6 +134,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val posts = repository.allPosts.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
     )
+
+    val connectionState: StateFlow<com.example.data.network.WebSocketState> = app.webSocketService.connectionState
+
+    fun updateOnlineStatus(status: String) {
+        viewModelScope.launch {
+            val user = currentUser.value ?: return@launch
+            repository.database.userDao().insertOrUpdateUser(
+                user.copy(onlineStatus = status, lastSeenTimestamp = System.currentTimeMillis())
+            )
+        }
+    }
 
     fun getMessagesForChannel(channelId: String): Flow<List<ChannelMessageEntity>> {
         return repository.getMessagesForChannel(channelId)
@@ -398,12 +420,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 replyToContent = reply?.content
             )
             _replyingToMessage.value = null
+            chatDraftDataStore.clearDraft(chatId)
+        }
+    }
+
+    fun getChatDraft(chatId: String): Flow<String> {
+        return chatDraftDataStore.getDraftFlow(chatId)
+    }
+
+    suspend fun getChatDraftOnce(chatId: String): String {
+        return chatDraftDataStore.getDraft(chatId)
+    }
+
+    fun saveChatDraft(chatId: String, draft: String) {
+        viewModelScope.launch {
+            chatDraftDataStore.saveDraft(chatId, draft)
+        }
+    }
+
+    fun clearChatDraft(chatId: String) {
+        viewModelScope.launch {
+            chatDraftDataStore.clearDraft(chatId)
         }
     }
 
     fun togglePinChat(chatId: String, isPinned: Boolean) {
         viewModelScope.launch {
             repository.togglePinChat(chatId, isPinned)
+        }
+    }
+
+    fun toggleAdminsOnlyMode(chatId: String, adminsOnly: Boolean) {
+        viewModelScope.launch {
+            repository.toggleAdminsOnlyMode(chatId, adminsOnly)
         }
     }
 
@@ -416,6 +465,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateWallpaper(chatId: String, wallpaper: String) {
         viewModelScope.launch {
             repository.updateWallpaper(chatId, wallpaper)
+        }
+    }
+
+    fun toggleBlockUser(chatId: String, isBlocked: Boolean) {
+        viewModelScope.launch {
+            repository.toggleBlockUser(chatId, isBlocked)
+        }
+    }
+
+    fun togglePinMessage(messageId: String, isPinned: Boolean) {
+        viewModelScope.launch {
+            repository.togglePinMessage(messageId, isPinned)
         }
     }
 
@@ -447,6 +508,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.deleteForEveryone(messageId)
         }
+    }
+
+    fun editMessage(messageId: String, chatId: String, newContent: String) {
+        if (newContent.isBlank()) return
+        viewModelScope.launch {
+            repository.editMessage(messageId, chatId, newContent.trim())
+        }
+    }
+
+    fun markChatAsRead(chatId: String) {
+        viewModelScope.launch {
+            val user = currentUser.value
+            val currentUserId = user?.id ?: "usr_google_irfan_9075"
+            repository.markChatAsRead(chatId, currentUserId)
+        }
+    }
+
+    fun setUserTyping(chatId: String, isTyping: Boolean) {
+        viewModelScope.launch {
+            val typingText = if (isTyping) "typing..." else ""
+            repository.setTypingStatus(chatId, typingText)
+        }
+    }
+
+    fun toggleShowExactTimestamps(show: Boolean) {
+        sessionManager.setShowExactTimestamps(show)
     }
 
     fun startCall(contactName: String, contactAvatar: String, isVideo: Boolean, contactUsername: String = "") {
@@ -711,55 +798,116 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     
-    suspend fun performLoginBack(usernameOrEmail: String, password: String): Boolean {
+    suspend fun performLoginBack(usernameOrEmail: String, password: String): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
             val input = usernameOrEmail.trim()
-            if (input.isEmpty() || password.isEmpty()) return@withContext false
+            if (input.isEmpty() || password.isEmpty()) {
+                return@withContext Pair(false, "Please enter your username/email and password.")
+            }
             val isEmail = input.contains("@") && !input.startsWith("@")
-            
+            val cleanUsername = input.removePrefix("@").lowercase()
+
             try {
-                val resolvedEmail = if (isEmail) {
-                    input
+                // 1. Look up account in local DB credentials
+                val localCred = if (isEmail) {
+                    repository.database.accountCredentialDao().getCredentialByEmail(input)
                 } else {
-                    firestoreService.getEmailByUsername(input) ?: input
+                    repository.database.accountCredentialDao().getCredentialByUsername(cleanUsername)
                 }
 
-                if (resolvedEmail != null) {
-                    val result = authRepository.signInWithEmailAndPassword(resolvedEmail, password)
-                    if (result != null && result.user != null) {
-                        val fbUser = result.user!!
-                        var userEntity = firestoreService.getUser(fbUser.uid)
-                        
-                        if (userEntity == null) {
-                            val cleanHandle = "@" + (if (isEmail) input.substringBefore("@") else input.lowercase().removePrefix("@"))
-                            userEntity = UserEntity(
-                                id = fbUser.uid,
-                                displayName = fbUser.displayName ?: fbUser.email?.substringBefore("@") ?: input,
-                                username = cleanHandle,
-                                email = fbUser.email ?: resolvedEmail,
-                                profilePictureUrl = fbUser.photoUrl?.toString() ?: "https://picsum.photos/seed/${fbUser.uid}/300/300",
-                                bio = "Connecting via V-Link ⚡",
-                                onlineStatus = "ONLINE",
-                                isCurrentUser = true,
-                                emailVerified = true,
-                                authProvider = "email"
-                            )
-                            firestoreService.registerUser(userEntity)
-                        }
+                // 2. Look up account in Firestore if not found locally
+                val remoteUser = if (localCred == null) {
+                    if (isEmail) firestoreService.getUserByEmail(input) else firestoreService.getUserByUsername(cleanUsername)
+                } else null
 
-                        repository.database.userDao().insertOrUpdateUser(userEntity.copy(isCurrentUser = true))
-                        sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", userEntity)
-                        return@withContext true
-                    } else {
-                        // Real authentication failed (e.g. wrong password or user not found)
-                        return@withContext false
+                val targetEmail = localCred?.email ?: remoteUser?.email ?: if (isEmail) input else null
+                val targetUserId = localCred?.id ?: remoteUser?.id
+
+                // 3. Try Firebase Auth sign in if email is known
+                var firebaseSuccess = false
+                var firebaseUser: com.google.firebase.auth.FirebaseUser? = null
+                if (targetEmail != null) {
+                    val authResult = authRepository.signInWithEmailAndPassword(targetEmail, password)
+                    if (authResult.isSuccess && authResult.getOrNull()?.user != null) {
+                        firebaseSuccess = true
+                        firebaseUser = authResult.getOrNull()!!.user
                     }
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Real Firebase login failed: ${e.message}")
-            }
 
-            return@withContext false
+                // 4. Verify password against local SHA-256 hash or Firestore hash
+                var localVerified = false
+                if (localCred != null) {
+                    localVerified = com.example.util.AuthCryptoUtils.verifyPassword(
+                        password = password,
+                        salt = localCred.passwordSalt,
+                        expectedHash = localCred.passwordHash
+                    )
+                }
+
+                var remoteVerified = false
+                if (!firebaseSuccess && !localVerified && targetUserId != null) {
+                    val remoteCred = firestoreService.getPasswordCredentials(targetUserId)
+                    if (remoteCred != null) {
+                        remoteVerified = com.example.util.AuthCryptoUtils.verifyPassword(
+                            password = password,
+                            salt = remoteCred.second,
+                            expectedHash = remoteCred.first
+                        )
+                    }
+                }
+
+                if (firebaseSuccess || localVerified || remoteVerified) {
+                    val userId = firebaseUser?.uid ?: targetUserId ?: "usr_${cleanUsername}"
+                    
+                    // Fetch or reconstruct user entity
+                    var userEntity = repository.database.userDao().getUserById(userId)
+                        ?: (if (targetUserId != null) firestoreService.getUser(targetUserId) else null)
+
+                    if (userEntity == null) {
+                        val cleanHandle = "@" + (if (isEmail) input.substringBefore("@") else cleanUsername)
+                        userEntity = UserEntity(
+                            id = userId,
+                            displayName = firebaseUser?.displayName ?: localCred?.displayName ?: remoteUser?.displayName ?: input.substringBefore("@"),
+                            username = cleanHandle,
+                            email = targetEmail ?: input,
+                            profilePictureUrl = firebaseUser?.photoUrl?.toString() ?: localCred?.profilePictureUrl ?: "https://picsum.photos/seed/$userId/300/300",
+                            bio = "Connecting via V-Link ⚡",
+                            onlineStatus = "ONLINE",
+                            isCurrentUser = true,
+                            emailVerified = true,
+                            authProvider = "email"
+                        )
+                        firestoreService.registerUser(userEntity)
+                    }
+
+                    // Save credentials locally if not present
+                    if (localCred == null) {
+                        val salt = com.example.util.AuthCryptoUtils.generateSalt()
+                        val hash = com.example.util.AuthCryptoUtils.hashPassword(password, salt)
+                        repository.database.accountCredentialDao().insertCredential(
+                            AccountCredentialEntity(
+                                id = userEntity.id,
+                                email = userEntity.email,
+                                username = userEntity.username,
+                                passwordHash = hash,
+                                passwordSalt = salt,
+                                displayName = userEntity.displayName,
+                                profilePictureUrl = userEntity.profilePictureUrl
+                            )
+                        )
+                    }
+
+                    repository.database.userDao().clearCurrentUserFlag()
+                    repository.database.userDao().insertOrUpdateUser(userEntity.copy(isCurrentUser = true))
+                    sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", userEntity)
+                    return@withContext Pair(true, "Login successful")
+                } else {
+                    return@withContext Pair(false, "Incorrect username/email or password. Please verify your credentials.")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Login error: ${e.message}")
+                return@withContext Pair(false, "Login failed: ${e.message ?: "Please check your network and credentials"}")
+            }
         }
     }
 
@@ -954,33 +1102,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         username: String,
         email: String,
         password: String
-    ): Boolean {
+    ): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
-            val cleanUsername = if (username.startsWith("@")) username else "@$username"
-            val cleanEmail = email.trim()
-            
+            val cleanUsername = if (username.startsWith("@")) username.lowercase().trim() else "@${username.lowercase().trim()}"
+            val cleanEmail = email.trim().lowercase()
+
+            // 1. Basic validation
+            if (!android.util.Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
+                return@withContext Pair(false, "Please enter a valid email address (e.g. name@domain.com).")
+            }
+            if (password.length < 6) {
+                return@withContext Pair(false, "Password must be at least 6 characters.")
+            }
+            if (displayName.trim().isEmpty()) {
+                return@withContext Pair(false, "Please enter your Nick Name.")
+            }
+
             try {
-                // Check handle availability in Firestore
-                val isAvailable = firestoreService.isUsernameUnique(cleanUsername)
-                if (!isAvailable) {
-                    return@withContext false
+                // 2. Check username availability locally and on Firestore
+                val existingLocalUser = repository.database.userDao().getUserByUsername(cleanUsername)
+                val existingLocalCred = repository.database.accountCredentialDao().getCredentialByUsername(cleanUsername)
+                if (existingLocalUser != null || existingLocalCred != null) {
+                    return@withContext Pair(false, "Username $cleanUsername is already taken on this device. Please choose another.")
                 }
 
-                var authResult = authRepository.registerWithEmailAndPassword(cleanEmail, password)
-                if (authResult == null || authResult.user == null) {
-                    authResult = authRepository.signInWithEmailAndPassword(cleanEmail, password)
+                val isUsernameFree = firestoreService.isUsernameUnique(cleanUsername)
+                if (!isUsernameFree) {
+                    return@withContext Pair(false, "Username $cleanUsername is already taken globally. Please choose another.")
                 }
 
-                if (authResult == null || authResult.user == null) {
-                    // Password was wrong or registration failed
-                    return@withContext false
+                // 3. Check email uniqueness locally and on Firestore
+                val existingEmailUser = repository.database.userDao().getUserByEmail(cleanEmail)
+                val existingEmailCred = repository.database.accountCredentialDao().getCredentialByEmail(cleanEmail)
+                if (existingEmailUser != null || existingEmailCred != null) {
+                    return@withContext Pair(false, "An account with email $cleanEmail already exists. Please Log In using your email and password.")
                 }
 
-                val userId = authResult.user!!.uid
+                val isEmailFree = firestoreService.isEmailUnique(cleanEmail)
+                if (!isEmailFree) {
+                    return@withContext Pair(false, "An account with email $cleanEmail is already registered. Please Log In instead.")
+                }
+
+                // 4. Register with Firebase Authentication
+                val authResult = authRepository.registerWithEmailAndPassword(cleanEmail, password)
+                var userId: String
+                val registeredUser = authResult.getOrNull()?.user
+                if (authResult.isSuccess && registeredUser != null) {
+                    userId = registeredUser.uid
+                } else {
+                    val ex = authResult.exceptionOrNull()
+                    if (ex is com.google.firebase.auth.FirebaseAuthUserCollisionException || ex?.message?.contains("already in use", ignoreCase = true) == true) {
+                        return@withContext Pair(false, "This email is already in use by another account. Please Log In with your password or use your own email.")
+                    }
+                    // Offline / local unique ID generation
+                    userId = "usr_" + java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+                }
+
+                val salt = com.example.util.AuthCryptoUtils.generateSalt()
+                val passwordHash = com.example.util.AuthCryptoUtils.hashPassword(password, salt)
 
                 val user = UserEntity(
                     id = userId,
-                    displayName = displayName,
+                    displayName = displayName.trim(),
                     username = cleanUsername,
                     email = cleanEmail,
                     profilePictureUrl = "https://picsum.photos/seed/${cleanUsername.removePrefix("@")}/300/300",
@@ -991,24 +1174,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     authProvider = "email"
                 )
 
+                // Save to Firestore
                 try {
-                    firestoreService.registerUser(user)
+                    firestoreService.registerUser(user, passwordHash, salt)
                 } catch (e: Exception) {
-                    android.util.Log.w("MainViewModel", "Firestore user save warning: ${e.message}")
+                    android.util.Log.w("MainViewModel", "Firestore register warning: ${e.message}")
                 }
 
+                // Save credentials in Room DB
+                repository.database.accountCredentialDao().insertCredential(
+                    AccountCredentialEntity(
+                        id = userId,
+                        email = cleanEmail,
+                        username = cleanUsername,
+                        passwordHash = passwordHash,
+                        passwordSalt = salt,
+                        displayName = user.displayName,
+                        profilePictureUrl = user.profilePictureUrl
+                    )
+                )
+
+                // Set as active user
+                repository.database.userDao().clearCurrentUserFlag()
                 repository.database.userDao().insertOrUpdateUser(user)
+
+                // Save session
                 sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", user)
-                return@withContext true
+                return@withContext Pair(true, "Account created successfully!")
 
             } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Firebase registration warning: ${e.message}")
-                return@withContext false
+                android.util.Log.e("MainViewModel", "Registration failed: ${e.message}")
+                return@withContext Pair(false, "Registration failed: ${e.message ?: "Please try again."}")
             }
         }
     }
 
-    
     fun updateContextualProfiles(chatDpUrl: String, postDpUrl: String, channelDpUrl: String, channelAlias: String) {
         viewModelScope.launch {
             val user = currentUser.value ?: return@launch
@@ -1074,13 +1274,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val user = repository.database.userDao().getCurrentUserOnce()
             if (user != null) {
                 firestoreService.deleteAccount(user.id, user.username)
-                repository.database.clearAllTables()
+                repository.database.accountCredentialDao().deleteCredential(user.id)
+                repository.database.userDao().updateUserStatus(user.id, "OFFLINE", System.currentTimeMillis())
             }
+            repository.database.userDao().clearCurrentUserFlag()
             sessionManager.logout()
         }
     }
 
     fun logout() {
-        sessionManager.logout()
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.database.userDao().clearCurrentUserFlag()
+            sessionManager.logout()
+        }
     }
 }

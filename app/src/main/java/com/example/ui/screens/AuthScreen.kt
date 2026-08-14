@@ -22,6 +22,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -47,6 +49,7 @@ fun AuthScreen(
     // Log In states
     var loginBackHandleInput by remember { mutableStateOf("") }
     var loginPasswordInput by remember { mutableStateOf("") }
+    var loginPasswordVisible by remember { mutableStateOf(false) }
     var loginBackErrorMessage by remember { mutableStateOf("") }
 
     // Register states
@@ -54,6 +57,9 @@ fun AuthScreen(
     var displayNameInput by remember { mutableStateOf("") }
     var emailInput by remember { mutableStateOf("") }
     var registerPasswordInput by remember { mutableStateOf("") }
+    var confirmPasswordInput by remember { mutableStateOf("") }
+    var registerPasswordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
 
     var isCheckingUsername by remember { mutableStateOf(false) }
     var usernameStatusText by remember { mutableStateOf("") }
@@ -292,16 +298,19 @@ fun AuthScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "Welcome back! Enter your handle or email address to log back into your V-Link account.",
+                                text = "Welcome back! Enter your handle (@username) or email address, and your password to sign in.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
                             OutlinedTextField(
                                 value = loginBackHandleInput,
-                                onValueChange = { loginBackHandleInput = it },
+                                onValueChange = { 
+                                    loginBackHandleInput = it 
+                                    loginBackErrorMessage = ""
+                                },
                                 label = { Text("Username or Email") },
-                                placeholder = { Text("e.g. irfan_vlink or irfan@vlink.chat") },
+                                placeholder = { Text("e.g. @irfan_vlink or email@domain.com") },
                                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = VLinkCyan) },
                                 singleLine = true,
                                 enabled = !isSubmitting,
@@ -310,37 +319,63 @@ fun AuthScreen(
 
                             OutlinedTextField(
                                 value = loginPasswordInput,
-                                onValueChange = { loginPasswordInput = it },
+                                onValueChange = { 
+                                    loginPasswordInput = it 
+                                    loginBackErrorMessage = ""
+                                },
                                 label = { Text("Password") },
-                                placeholder = { Text("Enter your password") },
+                                placeholder = { Text("Enter your account password") },
                                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
+                                trailingIcon = {
+                                    IconButton(onClick = { loginPasswordVisible = !loginPasswordVisible }) {
+                                        Icon(
+                                            imageVector = if (loginPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                            contentDescription = if (loginPasswordVisible) "Hide password" else "Show password",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (loginPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 singleLine = true,
                                 enabled = !isSubmitting,
                                 modifier = Modifier.fillMaxWidth().testTag("login_back_password_input")
                             )
 
                             if (loginBackErrorMessage.isNotEmpty()) {
-                                Text(
-                                    text = loginBackErrorMessage,
-                                    color = MaterialTheme.colorScheme.error,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
+                                Surface(
+                                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = loginBackErrorMessage,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
                             }
 
                             Button(
                                 onClick = {
                                     if (loginBackHandleInput.isBlank() || loginPasswordInput.isBlank()) {
-                                        loginBackErrorMessage = "Please enter your username/email and password."
+                                        loginBackErrorMessage = "Please enter your username or email and your password."
                                         return@Button
                                     }
                                     isSubmitting = true
                                     loginBackErrorMessage = ""
                                     coroutineScope.launch {
-                                        val success = viewModel.performLoginBack(loginBackHandleInput, loginPasswordInput)
+                                        val result = viewModel.performLoginBack(loginBackHandleInput, loginPasswordInput)
                                         isSubmitting = false
-                                        if (!success) {
-                                            loginBackErrorMessage = "Invalid credentials. Please verify your info or switch to 'Create Account'."
+                                        if (!result.first) {
+                                            loginBackErrorMessage = result.second
                                         }
                                     }
                                 },
@@ -357,7 +392,7 @@ fun AuthScreen(
                                 } else {
                                     Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Log In Back", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text("Log In", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
                             }
                         }
@@ -368,17 +403,21 @@ fun AuthScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "1. Unique Handle (@username). Firestore verifies no two users match.",
+                                text = "1. Unique Username (@handle)",
                                 fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
                             OutlinedTextField(
                                 value = usernameInput,
-                                onValueChange = { usernameInput = it },
-                                label = { Text("1. Unique Handle (@username)") },
+                                onValueChange = { 
+                                    usernameInput = it 
+                                    registrationErrorMessage = ""
+                                },
+                                label = { Text("Unique Handle (@username)") },
                                 placeholder = { Text("e.g. irfan_vlink") },
-                                leadingIcon = { Text("@", fontWeight = FontWeight.Bold, color = VLinkCyan, modifier = Modifier.padding(start = 4.dp)) },
+                                leadingIcon = { Text("@", fontWeight = FontWeight.Bold, color = VLinkCyan, modifier = Modifier.padding(start = 12.dp)) },
                                 trailingIcon = {
                                     if (isCheckingUsername) {
                                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -407,15 +446,19 @@ fun AuthScreen(
                             }
 
                             Text(
-                                text = "2. Nick Name (you can put anything).",
+                                text = "2. Nick Name / Full Name",
                                 fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
                             OutlinedTextField(
                                 value = displayNameInput,
-                                onValueChange = { displayNameInput = it },
-                                label = { Text("2. Nick Name") },
+                                onValueChange = { 
+                                    displayNameInput = it 
+                                    registrationErrorMessage = ""
+                                },
+                                label = { Text("Nick Name") },
                                 placeholder = { Text("e.g. Mohammad Irfan Khan") },
                                 leadingIcon = { Icon(Icons.Default.Badge, contentDescription = null, tint = VLinkCyan) },
                                 singleLine = true,
@@ -424,16 +467,20 @@ fun AuthScreen(
                             )
 
                             Text(
-                                text = "3. Email Address.",
+                                text = "3. Email Address",
                                 fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
                             OutlinedTextField(
                                 value = emailInput,
-                                onValueChange = { emailInput = it },
-                                label = { Text("3. Email Address") },
-                                placeholder = { Text("e.g. irfan@vlink.chat") },
+                                onValueChange = { 
+                                    emailInput = it 
+                                    registrationErrorMessage = ""
+                                },
+                                label = { Text("Email Address") },
+                                placeholder = { Text("e.g. mohammadirfankhan778866@gmail.com") },
                                 leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
                                 singleLine = true,
                                 enabled = !isSubmitting,
@@ -441,29 +488,87 @@ fun AuthScreen(
                             )
 
                             Text(
-                                text = "4. Password.",
+                                text = "4. Password (min 6 characters)",
                                 fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
                             OutlinedTextField(
                                 value = registerPasswordInput,
-                                onValueChange = { registerPasswordInput = it },
-                                label = { Text("4. Password") },
-                                placeholder = { Text("Enter a password") },
+                                onValueChange = { 
+                                    registerPasswordInput = it 
+                                    registrationErrorMessage = ""
+                                },
+                                label = { Text("Password") },
+                                placeholder = { Text("Enter your password") },
                                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
+                                trailingIcon = {
+                                    IconButton(onClick = { registerPasswordVisible = !registerPasswordVisible }) {
+                                        Icon(
+                                            imageVector = if (registerPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                            contentDescription = if (registerPasswordVisible) "Hide password" else "Show password",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (registerPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 singleLine = true,
                                 enabled = !isSubmitting,
                                 modifier = Modifier.fillMaxWidth().testTag("reg_password_inline_input")
                             )
 
+                            Text(
+                                text = "5. Confirm Password",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            OutlinedTextField(
+                                value = confirmPasswordInput,
+                                onValueChange = { 
+                                    confirmPasswordInput = it 
+                                    registrationErrorMessage = ""
+                                },
+                                label = { Text("Confirm Password") },
+                                placeholder = { Text("Re-enter your password") },
+                                leadingIcon = { Icon(Icons.Default.LockClock, contentDescription = null, tint = VLinkCyan) },
+                                trailingIcon = {
+                                    IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
+                                        Icon(
+                                            imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                            contentDescription = if (confirmPasswordVisible) "Hide password" else "Show password",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                singleLine = true,
+                                enabled = !isSubmitting,
+                                modifier = Modifier.fillMaxWidth().testTag("reg_confirm_password_inline_input")
+                            )
+
                             if (registrationErrorMessage.isNotEmpty()) {
-                                Text(
-                                    text = registrationErrorMessage,
-                                    color = MaterialTheme.colorScheme.error,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
+                                Surface(
+                                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = registrationErrorMessage,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
                             }
 
                             Button(
@@ -473,33 +578,46 @@ fun AuthScreen(
                                         return@Button
                                     }
                                     if (isUsernameAvailable == false) {
-                                        registrationErrorMessage = "Username is already taken in Firestore. Please choose another."
+                                        registrationErrorMessage = "Username is already taken. Please choose another."
                                         return@Button
                                     }
                                     if (displayNameInput.isBlank()) {
-                                        registrationErrorMessage = "Please enter a Nick Name."
+                                        registrationErrorMessage = "Please enter your Nick Name."
                                         return@Button
                                     }
-                                    if (emailInput.isBlank() || registerPasswordInput.isBlank()) {
-                                        registrationErrorMessage = "Please enter an email address and a password."
+                                    if (emailInput.isBlank()) {
+                                        registrationErrorMessage = "Please enter your email address."
+                                        return@Button
+                                    }
+                                    if (!android.util.Patterns.EMAIL_ADDRESS.matcher(emailInput.trim()).matches()) {
+                                        registrationErrorMessage = "Please enter a valid email format (e.g. name@domain.com)."
+                                        return@Button
+                                    }
+                                    if (registerPasswordInput.isBlank()) {
+                                        registrationErrorMessage = "Please enter a password."
                                         return@Button
                                     }
                                     if (registerPasswordInput.length < 6) {
                                         registrationErrorMessage = "Password must be at least 6 characters long."
                                         return@Button
                                     }
+                                    if (registerPasswordInput != confirmPasswordInput) {
+                                        registrationErrorMessage = "Passwords do not match. Please ensure both passwords match."
+                                        return@Button
+                                    }
+
                                     isSubmitting = true
                                     registrationErrorMessage = ""
                                     coroutineScope.launch {
-                                        val success = viewModel.registerUserWithUniqueUsername(
+                                        val result = viewModel.registerUserWithUniqueUsername(
                                             displayName = displayNameInput.trim(),
                                             username = usernameInput.trim(),
                                             email = emailInput.trim(),
                                             password = registerPasswordInput
                                         )
                                         isSubmitting = false
-                                        if (!success) {
-                                            registrationErrorMessage = "Failed to register account. Please check your network connection or try a different email."
+                                        if (!result.first) {
+                                            registrationErrorMessage = result.second
                                         }
                                     }
                                 },
@@ -516,7 +634,7 @@ fun AuthScreen(
                                 } else {
                                     Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Create V-Link Account", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text("Create Account", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
                             }
                         }

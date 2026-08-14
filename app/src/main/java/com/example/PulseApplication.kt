@@ -38,6 +38,9 @@ class PulseApplication : Application() {
     lateinit var authRepository: com.example.data.repository.AuthRepository
         private set
 
+    lateinit var chatDraftDataStore: com.example.data.datastore.ChatDraftDataStore
+        private set
+
     override fun onCreate() {
         super.onCreate()
         try {
@@ -53,6 +56,7 @@ class PulseApplication : Application() {
         webSocketService = PulseWebSocketService(database)
         chatRepository = ChatRepository(database, webSocketService)
         authRepository = com.example.data.repository.AuthRepository(this)
+        chatDraftDataStore = com.example.data.datastore.ChatDraftDataStore(this)
 
         createNotificationChannels()
         setupSyncWorker()

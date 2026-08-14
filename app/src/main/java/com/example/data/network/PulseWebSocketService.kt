@@ -64,13 +64,17 @@ class PulseWebSocketService(private val database: PulseDatabase) {
             database.chatDao().insertOrUpdateChat(updatedChat)
 
             // Simulate server routing and response
-            simulateServerEchoAndReply(chatId, content, type)
+            simulateServerEchoAndReply(chatId, content, type, msgId)
         }
     }
 
-    private fun simulateServerEchoAndReply(chatId: String, userText: String, type: MessageType) {
+    private fun simulateServerEchoAndReply(chatId: String, userText: String, type: MessageType, userMsgId: String) {
         scope.launch {
-            delay(600)
+            delay(400)
+            database.messageDao().updateMessageStatus(userMsgId, MessageStatus.DELIVERED.name)
+            delay(400)
+            database.messageDao().updateMessageStatus(userMsgId, MessageStatus.READ.name)
+
             val currentChat = database.chatDao().getChatByIdOnce(chatId)
             val contactName = currentChat?.title ?: "Contact"
 

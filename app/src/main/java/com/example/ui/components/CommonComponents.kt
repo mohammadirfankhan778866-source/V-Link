@@ -73,14 +73,81 @@ fun PulseAvatar(
         }
 
         if (isOnline) {
+            val infiniteTransition = rememberInfiniteTransition(label = "avatar_pulse")
+            val pulseScale by infiniteTransition.animateFloat(
+                initialValue = 1f,
+                targetValue = 1.15f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1200, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "scale"
+            )
             Box(
                 modifier = Modifier
-                    .size(size * 0.28f)
+                    .size(size * 0.28f * pulseScale)
                     .clip(CircleShape)
                     .background(OnlineGreen)
                     .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
                     .align(Alignment.BottomEnd)
             )
+        }
+    }
+}
+
+@Composable
+fun RealtimeConnectivityBadge(
+    isConnected: Boolean,
+    onlineStatus: String = "ONLINE",
+    modifier: Modifier = Modifier,
+    showLabel: Boolean = true,
+    onClick: (() -> Unit)? = null
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+
+    val (statusColor, statusText) = when {
+        !isConnected -> Color(0xFFE53935) to "Disconnected"
+        onlineStatus == "AWAY" -> Color(0xFFFFB300) to "Away"
+        onlineStatus == "OFFLINE" -> Color.Gray to "Invisible"
+        else -> OnlineGreen to "Online"
+    }
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = statusColor.copy(alpha = 0.12f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, statusColor.copy(alpha = 0.3f)),
+        modifier = modifier.then(
+            if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(if (isConnected && onlineStatus == "ONLINE") statusColor.copy(alpha = alpha) else statusColor)
+            )
+            if (showLabel) {
+                Text(
+                    text = statusText,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = statusColor
+                )
+            }
         }
     }
 }
@@ -174,6 +241,215 @@ fun VoiceNotePlayer(
             text = duration,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/**
+ * Animated Typing status display component that renders bouncing dots and a typing label.
+ */
+@Composable
+fun TypingStatusDisplay(
+    userName: String = "Typing",
+    modifier: Modifier = Modifier,
+    showAvatar: Boolean = false,
+    avatarUrl: String = ""
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "typing_dots")
+    val dot1Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, delayMillis = 0, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot1"
+    )
+    val dot2Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, delayMillis = 200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot2"
+    )
+    val dot3Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, delayMillis = 400, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot3"
+    )
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+        modifier = modifier
+            .testTag("typing_status_display")
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (showAvatar) {
+                PulseAvatar(
+                    imageUrl = avatarUrl,
+                    name = userName,
+                    size = 20.dp
+                )
+            }
+            Text(
+                text = if (userName == "Typing") "typing..." else "$userName is typing...",
+                fontSize = 12.sp,
+                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                color = PulseGreen,
+                fontWeight = FontWeight.Medium
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(PulseGreen.copy(alpha = dot1Alpha))
+                )
+                Box(
+                    modifier = Modifier
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(PulseGreen.copy(alpha = dot2Alpha))
+                )
+                Box(
+                    modifier = Modifier
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(PulseGreen.copy(alpha = dot3Alpha))
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Confirmation dialog for safely deleting sent/received messages.
+ */
+@Composable
+fun DeleteMessageConfirmationDialog(
+    isOutgoing: Boolean,
+    onDismiss: () -> Unit,
+    onDeleteForMe: () -> Unit,
+    onDeleteForEveryone: (() -> Unit)? = null
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DeleteForever,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+                Text("Delete message?", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+        },
+        text = {
+            Text(
+                text = if (isOutgoing) {
+                    "Are you sure you want to delete this message? You can delete it just for yourself or for everyone in the chat."
+                } else {
+                    "Are you sure you want to delete this message from your chat history?"
+                },
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        confirmButton = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.End
+            ) {
+                if (isOutgoing && onDeleteForEveryone != null) {
+                    TextButton(
+                        onClick = {
+                            onDeleteForEveryone()
+                            onDismiss()
+                        }
+                    ) {
+                        Text(
+                            "Delete for Everyone",
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                TextButton(
+                    onClick = {
+                        onDeleteForMe()
+                        onDismiss()
+                    }
+                ) {
+                    Text(
+                        "Delete for Me",
+                        color = if (isOutgoing) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+                        fontWeight = if (!isOutgoing) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+/**
+ * Reusable icon item for attachment picker sheet.
+ */
+@Composable
+fun AttachmentOptionItem(
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(54.dp)
+                .clip(CircleShape)
+                .background(color),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                tint = Color.White,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = title,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
 }

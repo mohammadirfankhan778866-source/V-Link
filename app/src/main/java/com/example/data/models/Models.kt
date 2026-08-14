@@ -57,7 +57,12 @@ data class ChatEntity(
     val wallpaperTheme: String = "DEFAULT",
     val typingStatus: String = "", // e.g. "typing..." or ""
     val memberCount: Int = 1,
-    val isPremium: Boolean = false
+    val isPremium: Boolean = false,
+    val adminIds: String = "",
+    val adminsOnlyMode: Boolean = false,
+    val isOnline: Boolean = true,
+    val lastSeenTimestamp: Long = 0L,
+    val isBlocked: Boolean = false
 )
 
 @Entity(tableName = "messages")
@@ -78,10 +83,13 @@ data class MessageEntity(
     val replyToSenderName: String? = null,
     val replyToContent: String? = null,
     val isStarred: Boolean = false,
+    val isPinned: Boolean = false,
     val isDeletedForEveryone: Boolean = false,
     val isDeletedForMe: Boolean = false,
     val reactions: String = "", // e.g. "❤️,👍"
-    val isPremium: Boolean = false
+    val isPremium: Boolean = false,
+    val isEdited: Boolean = false,
+    val editedTimestamp: Long = 0L
 )
 
 @Entity(tableName = "status_stories")
@@ -126,7 +134,8 @@ data class ChannelEntity(
     val lastMessageText: String = "",
     val lastMessageTimestamp: Long = System.currentTimeMillis(),
     val visibility: String = "PUBLIC", // PUBLIC, FRIENDS_ONLY
-    val isPremium: Boolean = false
+    val isPremium: Boolean = false,
+    val adminsOnlyMode: Boolean = false
 )
 
 @Entity(tableName = "channel_messages")
@@ -160,6 +169,18 @@ data class PostEntity(
     val fileSize: String = "",
     val visibility: String = "PUBLIC", // PUBLIC, FRIENDS_ONLY
     val isPremium: Boolean = false
+)
+
+@Entity(tableName = "account_credentials")
+data class AccountCredentialEntity(
+    @PrimaryKey val id: String,
+    val email: String,
+    val username: String,
+    val passwordHash: String,
+    val passwordSalt: String,
+    val displayName: String,
+    val profilePictureUrl: String = "",
+    val createdAt: Long = System.currentTimeMillis()
 )
 
 data class AdminAnalytics(

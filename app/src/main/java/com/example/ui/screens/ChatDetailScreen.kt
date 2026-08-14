@@ -1,11 +1,8 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.*
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,14 +23,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.models.*
+import com.example.ui.components.AttachmentOptionItem
+import com.example.ui.components.DeleteMessageConfirmationDialog
+import com.example.ui.components.EmojiPickerPopup
 import com.example.ui.components.MessageStatusTicks
 import com.example.ui.components.PulseAvatar
+import com.example.ui.components.TypingStatusDisplay
 import com.example.ui.components.VoiceNotePlayer
 import com.example.ui.theme.*
 import com.example.ui.viewmodels.MainViewModel
@@ -55,23 +60,87 @@ fun ChatDetailScreen(
     val messages by messagesFlow.collectAsState(initial = emptyList())
 
     val replyingToMessage by viewModel.replyingToMessage.collectAsState()
+    val showExactTimestamps by viewModel.showExactTimestamps.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserId = currentUser?.id ?: "usr_google_irfan_9075"
 
     var inputText by remember { mutableStateOf("") }
+    var editingMessage by remember { mutableStateOf<MessageEntity?>(null) }
+    var pendingImageToSend by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var imageCaptionInput by remember { mutableStateOf("") }
     var showAttachmentSheet by remember { mutableStateOf(false) }
+    var showEmojiPicker by remember { mutableStateOf(false) }
+    var isSearchingMessages by remember { mutableStateOf(false) }
+    var messageSearchQuery by remember { mutableStateOf("") }
     var showReactionPickerForMsg by remember { mutableStateOf<MessageEntity?>(null) }
     var showReactionDetailsForMsg by remember { mutableStateOf<MessageEntity?>(null) }
     var showMsgOptionsForMsg by remember { mutableStateOf<MessageEntity?>(null) }
+    var msgToDelete by remember { mutableStateOf<MessageEntity?>(null) }
     var isRecordingVoiceNote by remember { mutableStateOf(false) }
     var selectedWallpaper by remember { mutableStateOf("DEFAULT") }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+    // Mark messages as read on entry and when new messages arrive
+    LaunchedEffect(chatId, messages.size) {
+        viewModel.markChatAsRead(chatId)
+    }
+
+    // Sync real-time typing status with backend
+    LaunchedEffect(inputText) {
+        if (inputText.isNotBlank() && editingMessage == null) {
+            viewModel.setUserTyping(chatId, true)
+        } else {
+            viewModel.setUserTyping(chatId, false)
+        }
+    }
+
+    // Clear typing status on leaving chat
+    DisposableEffect(chatId) {
+        onDispose {
+            viewModel.setUserTyping(chatId, false)
+        }
+    }
+
+    // Restore draft text from DataStore when entering the chat screen
+    LaunchedEffect(chatId) {
+        val savedDraft = viewModel.getChatDraftOnce(chatId)
+        if (savedDraft.isNotBlank() && inputText.isBlank()) {
+            inputText = savedDraft
+        }
+    }
+
+    // Save draft text to DataStore when the user leaves or types (only if not editing)
+    DisposableEffect(chatId, inputText) {
+        onDispose {
+            if (editingMessage == null) {
+                viewModel.saveChatDraft(chatId, inputText)
+            }
+        }
+    }
+
+    // Filter messages based on keyword search query
+    val displayMessages = remember(messages, messageSearchQuery) {
+        if (messageSearchQuery.isBlank()) {
+            messages
+        } else {
+            messages.filter { msg ->
+                msg.content.contains(messageSearchQuery, ignoreCase = true) ||
+                        msg.fileName.contains(messageSearchQuery, ignoreCase = true) ||
+                        msg.senderName.contains(messageSearchQuery, ignoreCase = true)
+            }
+        }
+    }
+
+    // Group consecutive messages sent by the same user within 2 minutes into single cohesive bubbles
+    val messageGroups = remember(displayMessages, currentUserId) {
+        groupConsecutiveMessages(displayMessages, currentUserId)
+    }
+
+    LaunchedEffect(messageGroups.size) {
+        if (messageGroups.isNotEmpty()) {
+            listState.animateScrollToItem(messageGroups.size - 1)
         }
     }
 
@@ -84,145 +153,256 @@ fun ChatDetailScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.testTag("chat_back_button")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    ) {
-                        PulseAvatar(
-                            imageUrl = chat?.avatarUrl ?: "",
-                            name = chat?.title ?: "Chat",
-                            size = 40.dp,
-                            isOnline = chat?.isGroup == false
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = chat?.title ?: "Chat",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (chat?.isPremium == true) {
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Icon(Icons.Default.Star, contentDescription = "Premium", tint = Color(0xFFFFC107), modifier = Modifier.size(14.dp))
-                                }
-                            }
-                            val handleText = if (!chat?.username.isNullOrEmpty()) {
-                                if (chat?.username!!.startsWith("@")) chat?.username!! else "@${chat?.username}"
-                            } else if (chat?.isGroup == false && chat?.title != null) {
-                                "@${chat?.title!!.lowercase().replace(" ", "_")}"
-                            } else ""
-
-                            val statusText = if (!chat?.typingStatus.isNullOrEmpty()) {
-                                chat?.typingStatus!!
-                            } else if (chat?.isGroup == true) {
-                                "${chat?.memberCount} members"
-                            } else {
-                                "online • E2EE"
-                            }
-
-                            val subtitle = if (handleText.isNotEmpty()) "$handleText • $statusText" else statusText
-
-                            Text(
-                                text = subtitle,
-                                fontSize = 11.sp,
-                                color = if (chat?.typingStatus.isNullOrEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else PulseGreen
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    var showCallDialog by remember { mutableStateOf(false) }
-                    
-                    if (showCallDialog) {
-                        AlertDialog(
-                            onDismissRequest = { showCallDialog = false },
-                            title = { Text("Call ${chat?.title ?: "Contact"}") },
-                            text = { Text("Choose call type:") },
-                            confirmButton = {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                        onClick = {
-                                            val isGroup = chat?.isGroup == true
-                                            if (isGroup) {
-                                                viewModel.startGroupCall(chat?.title ?: "Group", chat?.avatarUrl ?: "", false)
-                                            } else {
-                                                viewModel.startCall(chat?.title ?: "Contact", chat?.avatarUrl ?: "", false, chat?.username ?: "")
-                                            }
-                                            showCallDialog = false
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
-                                    ) {
-                                        Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Call")
-                                    }
-
-                                    Button(
-                                        onClick = {
-                                            val isGroup = chat?.isGroup == true
-                                            if (isGroup) {
-                                                viewModel.startGroupCall(chat?.title ?: "Group", chat?.avatarUrl ?: "", true)
-                                            } else {
-                                                viewModel.startCall(chat?.title ?: "Contact", chat?.avatarUrl ?: "", true, chat?.username ?: "")
-                                            }
-                                            showCallDialog = false
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
-                                    ) {
-                                        Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Video Call")
-                                    }
-                                }
+            if (isSearchingMessages) {
+                // In-Chat Keyword Search Bar
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(
+                            onClick = {
+                                isSearchingMessages = false
+                                messageSearchQuery = ""
                             },
-                            dismissButton = {
-                                TextButton(onClick = { showCallDialog = false }) {
-                                    Text("Cancel")
+                            modifier = Modifier.testTag("close_chat_search_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
+                        }
+                    },
+                    title = {
+                        OutlinedTextField(
+                            value = messageSearchQuery,
+                            onValueChange = { messageSearchQuery = it },
+                            placeholder = { Text("Search messages...", fontSize = 14.sp) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("chat_search_input_field"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color.Transparent,
+                                unfocusedBorderColor = Color.Transparent,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent
+                            )
+                        )
+                    },
+                    actions = {
+                        if (messageSearchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { messageSearchQuery = "" },
+                                modifier = Modifier.testTag("clear_chat_search_button")
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    )
+                )
+            } else {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = onBack, modifier = Modifier.testTag("chat_back_button")) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        ) {
+                            PulseAvatar(
+                                imageUrl = chat?.avatarUrl ?: "",
+                                name = chat?.title ?: "Chat",
+                                size = 40.dp,
+                                isOnline = chat?.isGroup == false
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = chat?.title ?: "Chat",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (chat?.isPremium == true) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(Icons.Default.Star, contentDescription = "Premium", tint = Color(0xFFFFC107), modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                                val handleText = if (!chat?.username.isNullOrEmpty()) {
+                                    if (chat?.username!!.startsWith("@")) chat?.username!! else "@${chat?.username}"
+                                } else if (chat?.isGroup == false && chat?.title != null) {
+                                    "@${chat?.title!!.lowercase().replace(" ", "_")}"
+                                } else ""
+
+                                val statusText = if (chat?.isBlocked == true) {
+                                    "Blocked"
+                                } else if (!chat?.typingStatus.isNullOrEmpty()) {
+                                    chat?.typingStatus!!
+                                } else if (chat?.isGroup == true) {
+                                    "${chat?.memberCount} members"
+                                } else if (chat?.isOnline == true) {
+                                    "Online"
+                                } else if (chat?.lastSeenTimestamp != null && chat?.lastSeenTimestamp!! > 0) {
+                                    "last seen at " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(chat?.lastSeenTimestamp!!))
+                                } else {
+                                    "Offline"
+                                }
+
+                                val hasTyping = !chat?.typingStatus.isNullOrEmpty()
+                                if (hasTyping) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            text = if (chat?.isGroup == true) "${chat?.title}: typing..." else "typing...",
+                                            fontSize = 11.sp,
+                                            color = PulseGreen,
+                                            fontWeight = FontWeight.Bold,
+                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                        )
+                                        val infiniteTransition = rememberInfiniteTransition(label = "header_typing_dots")
+                                        val dotAlpha by infiniteTransition.animateFloat(
+                                            initialValue = 0.2f,
+                                            targetValue = 1f,
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(600, easing = LinearEasing),
+                                                repeatMode = RepeatMode.Reverse
+                                            ),
+                                            label = "hdot"
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(PulseGreen.copy(alpha = dotAlpha))
+                                        )
+                                    }
+                                } else {
+                                    val subtitle = if (handleText.isNotEmpty()) "$handleText • $statusText" else statusText
+                                    Text(
+                                        text = subtitle,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
-                        )
-                    }
+                        }
+                    },
+                    actions = {
+                        // Search in chat button
+                        IconButton(
+                            onClick = { isSearchingMessages = true },
+                            modifier = Modifier.testTag("search_messages_button")
+                        ) {
+                            Icon(Icons.Default.Search, contentDescription = "Search Messages")
+                        }
 
-                    IconButton(onClick = { showCallDialog = true }) {
-                        Icon(Icons.Default.Call, contentDescription = "Voice Call")
-                    }
-                    Box {
-                        var menuOpen by remember { mutableStateOf(false) }
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "More")
-                        }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Wallpapers") },
-                                onClick = {
-                                    menuOpen = false
-                                    selectedWallpaper = if (selectedWallpaper == "DEFAULT") "EMERALD" else "DEFAULT"
+                        var showCallDialog by remember { mutableStateOf(false) }
+                        
+                        if (showCallDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showCallDialog = false },
+                                title = { Text("Call ${chat?.title ?: "Contact"}") },
+                                text = { Text("Choose call type:") },
+                                confirmButton = {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = {
+                                                val isGroup = chat?.isGroup == true
+                                                if (isGroup) {
+                                                    viewModel.startGroupCall(chat?.title ?: "Group", chat?.avatarUrl ?: "", false)
+                                                } else {
+                                                    viewModel.startCall(chat?.title ?: "Contact", chat?.avatarUrl ?: "", false, chat?.username ?: "")
+                                                }
+                                                showCallDialog = false
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                                        ) {
+                                            Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Call")
+                                        }
+
+                                        Button(
+                                            onClick = {
+                                                val isGroup = chat?.isGroup == true
+                                                if (isGroup) {
+                                                    viewModel.startGroupCall(chat?.title ?: "Group", chat?.avatarUrl ?: "", true)
+                                                } else {
+                                                    viewModel.startCall(chat?.title ?: "Contact", chat?.avatarUrl ?: "", true, chat?.username ?: "")
+                                                }
+                                                showCallDialog = false
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                                        ) {
+                                            Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Video Call")
+                                        }
+                                    }
                                 },
-                                leadingIcon = { Icon(Icons.Outlined.Wallpaper, contentDescription = null) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Clear Messages") },
-                                onClick = {
-                                    menuOpen = false
-                                    scope.launch { viewModel.repository.clearChatMessages(chatId) }
-                                },
-                                leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) }
+                                dismissButton = {
+                                    TextButton(onClick = { showCallDialog = false }) {
+                                        Text("Cancel")
+                                    }
+                                }
                             )
                         }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
-            )
+
+                        IconButton(onClick = { showCallDialog = true }) {
+                            Icon(Icons.Default.Call, contentDescription = "Voice Call")
+                        }
+                        Box {
+                            var menuOpen by remember { mutableStateOf(false) }
+                            IconButton(onClick = { menuOpen = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "More")
+                            }
+                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Wallpapers") },
+                                    onClick = {
+                                        menuOpen = false
+                                        selectedWallpaper = if (selectedWallpaper == "DEFAULT") "EMERALD" else "DEFAULT"
+                                    },
+                                    leadingIcon = { Icon(Icons.Outlined.Wallpaper, contentDescription = null) }
+                                )
+                                if (chat?.isGroup == true) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (chat?.adminsOnlyMode == true) "Allow Public Messages" else "Admins Only Mode") },
+                                        onClick = {
+                                            menuOpen = false
+                                            viewModel.toggleAdminsOnlyMode(chatId, !(chat?.adminsOnlyMode == true))
+                                        },
+                                        leadingIcon = { Icon(Icons.Outlined.Security, contentDescription = null) }
+                                    )
+                                } else if (chat != null) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (chat?.isBlocked == true) "Unblock User" else "Block User") },
+                                        onClick = {
+                                            menuOpen = false
+                                            viewModel.toggleBlockUser(chatId, !(chat?.isBlocked == true))
+                                        },
+                                        leadingIcon = { Icon(Icons.Outlined.Block, contentDescription = null) }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Clear Messages") },
+                                    onClick = {
+                                        menuOpen = false
+                                        scope.launch { viewModel.repository.clearChatMessages(chatId) }
+                                    },
+                                    leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) }
+                                )
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                )
+            }
         }
     ) { innerPadding ->
         Box(
@@ -232,7 +412,70 @@ fun ChatDetailScreen(
                 .background(wallpaperBackground)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Messages List
+                // Search Results Info Banner
+                if (messageSearchQuery.isNotBlank()) {
+                    Surface(
+                        color = PulseGreen.copy(alpha = 0.15f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Found ${displayMessages.size} matching message(s)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PulseGreen
+                            )
+                            TextButton(
+                                onClick = { messageSearchQuery = "" },
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("Show All", fontSize = 12.sp, color = PulseGreen, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                // Pinned Messages Banner
+                val pinnedMessages = messages.filter { it.isPinned }
+                if (pinnedMessages.isNotEmpty()) {
+                    val latestPinned = pinnedMessages.last()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f))
+                            .clickable {
+                                scope.launch {
+                                    val index = messageGroups.indexOfFirst { grp -> grp.messages.any { it.id == latestPinned.id } }
+                                    if (index >= 0) listState.animateScrollToItem(index)
+                                }
+                            }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Pinned Message",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PulseGreen
+                            )
+                            Text(
+                                text = latestPinned.content,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                // Messages List (Consecutive Messages Grouped under Single Bubble)
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -272,15 +515,71 @@ fun ChatDetailScreen(
                         }
                     }
 
-                    items(messages, key = { it.id }) { message ->
-                        val isOutgoing = message.senderId == currentUserId
-                        MessageBubbleRow(
-                            message = message,
-                            isOutgoing = isOutgoing,
+                    items(messageGroups, key = { it.groupKey }) { group ->
+                        GroupedMessageBubbleRow(
+                            group = group,
+                            isGroupChat = chat?.isGroup == true,
+                            searchKeyword = messageSearchQuery,
                             currentUserId = currentUserId,
-                            onLongClick = { showMsgOptionsForMsg = message },
-                            onReactionClick = { showReactionDetailsForMsg = message }
+                            showExactTimestamps = showExactTimestamps,
+                            onMessageLongClick = { msg -> showMsgOptionsForMsg = msg },
+                            onReactionClick = { msg -> showReactionDetailsForMsg = msg }
                         )
+                    }
+
+                    // Typing Indicator Display in Chat Flow
+                    if (!chat?.typingStatus.isNullOrEmpty()) {
+                        item {
+                            TypingStatusDisplay(
+                                userName = chat?.title ?: "Contact",
+                                showAvatar = true,
+                                avatarUrl = chat?.avatarUrl ?: ""
+                            )
+                        }
+                    }
+                }
+
+                // Editing Banner
+                editingMessage?.let { editMsg ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(PulseGreen.copy(alpha = 0.15f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(18.dp))
+                            Column {
+                                Text(
+                                    text = "Edit Message",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PulseGreen
+                                )
+                                Text(
+                                    text = editMsg.content,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = {
+                                editingMessage = null
+                                inputText = ""
+                            },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel edit", modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
 
@@ -314,22 +613,60 @@ fun ChatDetailScreen(
                     }
                 }
 
+                // Lightweight Emoji Picker Popup above the message input field
+                AnimatedVisibility(
+                    visible = showEmojiPicker,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    EmojiPickerPopup(
+                        onEmojiSelected = { emoji ->
+                            inputText += emoji
+                        },
+                        onBackspace = {
+                            if (inputText.isNotEmpty()) {
+                                inputText = inputText.dropLast(1)
+                            }
+                        },
+                        onClose = { showEmojiPicker = false }
+                    )
+                }
+
                 // Message Input Bar
+                val isAdmin = chat?.adminIds?.contains(currentUserId) == true
+                val isBlocked = chat?.isBlocked == true
+                val canSendMessage = !isBlocked && (chat?.isGroup != true || !(chat?.adminsOnlyMode == true) || isAdmin)
+
                 Surface(
                     shadowElevation = 8.dp,
                     color = MaterialTheme.colorScheme.surface
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    if (!canSendMessage) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (isBlocked) "You blocked this contact" else "Only admins can send messages",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                         if (!isRecordingVoiceNote) {
                             OutlinedTextField(
                                 value = inputText,
                                 onValueChange = { inputText = it },
-                                placeholder = { Text("Message...", fontSize = 14.sp) },
+                                placeholder = { Text(if (editingMessage != null) "Edit message..." else "Message...", fontSize = 14.sp) },
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("message_input_field"),
@@ -342,28 +679,40 @@ fun ChatDetailScreen(
                                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                 ),
                                 leadingIcon = {
-                                    IconButton(onClick = { /* Emoji */ }) {
-                                        Icon(Icons.Default.Face, contentDescription = "Emoji", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    IconButton(
+                                        onClick = { showEmojiPicker = !showEmojiPicker },
+                                        modifier = Modifier.testTag("emoji_toggle_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = if (showEmojiPicker) Icons.Default.Keyboard else Icons.Default.Face,
+                                            contentDescription = "Emoji Picker",
+                                            tint = if (showEmojiPicker) PulseGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
                                 },
                                 trailingIcon = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        IconButton(onClick = { showAttachmentSheet = true }) {
-                                            Icon(
-                                                imageVector = Icons.Default.AttachFile,
-                                                contentDescription = "Attach",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        if (inputText.isBlank()) {
-                                            IconButton(onClick = { 
-                                                viewModel.sendMessage(chatId, "Camera Photo", MessageType.IMAGE, "https://picsum.photos/seed/camera/800/600")
-                                            }) {
+                                        if (editingMessage == null) {
+                                            IconButton(
+                                                onClick = { showAttachmentSheet = true },
+                                                modifier = Modifier.testTag("attachment_icon_button")
+                                            ) {
                                                 Icon(
-                                                    imageVector = Icons.Default.CameraAlt,
-                                                    contentDescription = "Camera",
+                                                    imageVector = Icons.Default.AttachFile,
+                                                    contentDescription = "Attach",
                                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
+                                            }
+                                            if (inputText.isBlank()) {
+                                                IconButton(onClick = { 
+                                                    pendingImageToSend = Pair("https://picsum.photos/seed/camera/800/600", "Camera Photo")
+                                                }) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.CameraAlt,
+                                                        contentDescription = "Camera",
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -424,11 +773,34 @@ fun ChatDetailScreen(
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send Voice Note", tint = Color.White)
                             }
+                        } else if (editingMessage != null) {
+                            // Edit message save button
+                            IconButton(
+                                onClick = {
+                                    val currentEditing = editingMessage
+                                    if (currentEditing != null && inputText.isNotBlank()) {
+                                        viewModel.editMessage(currentEditing.id, chatId, inputText.trim())
+                                        editingMessage = null
+                                        inputText = ""
+                                        viewModel.clearChatDraft(chatId)
+                                        showEmojiPicker = false
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .background(PulseGreen, CircleShape)
+                                    .testTag("save_edit_message_button")
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = "Save Edit", tint = Color.White)
+                            }
                         } else if (inputText.isNotBlank()) {
                             IconButton(
                                 onClick = {
-                                    viewModel.sendMessage(chatId, inputText.trim())
+                                    val textToSend = inputText.trim()
+                                    viewModel.sendMessage(chatId, textToSend)
                                     inputText = ""
+                                    viewModel.clearChatDraft(chatId)
+                                    showEmojiPicker = false
                                 },
                                 modifier = Modifier
                                     .size(44.dp)
@@ -449,6 +821,7 @@ fun ChatDetailScreen(
                                 Icon(Icons.Default.Mic, contentDescription = "Voice Note", tint = Color.White)
                             }
                         }
+                    }
                     }
                 }
             }
@@ -473,11 +846,11 @@ fun ChatDetailScreen(
                                     showAttachmentSheet = false
                                 }
                                 AttachmentOptionItem("Camera", Icons.Default.CameraAlt, Color(0xFFD3396D)) {
-                                    viewModel.sendMessage(chatId, "Camera Photo", MessageType.IMAGE, "https://picsum.photos/seed/camera/800/600")
+                                    pendingImageToSend = Pair("https://picsum.photos/seed/camera/800/600", "Camera Photo")
                                     showAttachmentSheet = false
                                 }
                                 AttachmentOptionItem("Gallery", Icons.Default.Image, Color(0xFF007BF5)) {
-                                    viewModel.sendMessage(chatId, "Shared Image", MessageType.IMAGE, "https://picsum.photos/seed/sharedimg/800/600")
+                                    pendingImageToSend = Pair("https://picsum.photos/seed/gallery/800/600", "Shared Image")
                                     showAttachmentSheet = false
                                 }
                             }
@@ -501,6 +874,88 @@ fun ChatDetailScreen(
                         }
                     }
                 }
+            }
+
+            // Image Thumbnail Preview Dialog before sending
+            pendingImageToSend?.let { (imageUrl, defaultCaption) ->
+                AlertDialog(
+                    onDismissRequest = { pendingImageToSend = null },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Image, contentDescription = null, tint = PulseGreen)
+                            Text("Image Preview", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        }
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(200.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.Black.copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AsyncImage(
+                                    model = imageUrl,
+                                    contentDescription = "Image preview thumbnail",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
+
+                            OutlinedTextField(
+                                value = imageCaptionInput,
+                                onValueChange = { imageCaptionInput = it },
+                                placeholder = { Text("Add a caption...") },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = PulseGreen) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("image_caption_input"),
+                                shape = RoundedCornerShape(16.dp),
+                                maxLines = 3
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val caption = imageCaptionInput.trim().ifBlank { defaultCaption.ifBlank { "Shared Image" } }
+                                viewModel.sendMessage(
+                                    chatId = chatId,
+                                    content = caption,
+                                    type = MessageType.IMAGE,
+                                    mediaUrl = imageUrl
+                                )
+                                pendingImageToSend = null
+                                imageCaptionInput = ""
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                            modifier = Modifier.testTag("confirm_send_image_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Send", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { 
+                            pendingImageToSend = null
+                            imageCaptionInput = ""
+                        }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
             }
 
             // Message Options Alert Dialog
@@ -550,6 +1005,14 @@ fun ChatDetailScreen(
                                 }
                             )
                             ListItem(
+                                headlineContent = { Text(if (msg.isPinned) "Unpin Message" else "Pin Message") },
+                                leadingContent = { Icon(Icons.Default.PushPin, contentDescription = null) },
+                                modifier = Modifier.clickable {
+                                    viewModel.togglePinMessage(msg.id, !msg.isPinned)
+                                    showMsgOptionsForMsg = null
+                                }
+                            )
+                            ListItem(
                                 headlineContent = { Text(if (msg.isStarred) "Unstar Message" else "Star Message") },
                                 leadingContent = { Icon(Icons.Default.Star, contentDescription = null) },
                                 modifier = Modifier.clickable {
@@ -557,6 +1020,17 @@ fun ChatDetailScreen(
                                     showMsgOptionsForMsg = null
                                 }
                             )
+                            if (msg.senderId == currentUserId && msg.type == MessageType.TEXT.name) {
+                                ListItem(
+                                    headlineContent = { Text("Edit Message") },
+                                    leadingContent = { Icon(Icons.Default.Edit, contentDescription = null, tint = PulseGreen) },
+                                    modifier = Modifier.clickable {
+                                        editingMessage = msg
+                                        inputText = msg.content
+                                        showMsgOptionsForMsg = null
+                                    }
+                                )
+                            }
                             ListItem(
                                 headlineContent = { Text("View Reactions") },
                                 leadingContent = { Icon(Icons.Default.Face, contentDescription = null, tint = PulseGreen) },
@@ -569,7 +1043,7 @@ fun ChatDetailScreen(
                                 headlineContent = { Text("Delete for Me") },
                                 leadingContent = { Icon(Icons.Default.Delete, contentDescription = null) },
                                 modifier = Modifier.clickable {
-                                    viewModel.deleteForMe(msg.id)
+                                    msgToDelete = msg
                                     showMsgOptionsForMsg = null
                                 }
                             )
@@ -578,7 +1052,7 @@ fun ChatDetailScreen(
                                     headlineContent = { Text("Delete for Everyone") },
                                     leadingContent = { Icon(Icons.Default.DeleteForever, contentDescription = null, tint = Color.Red) },
                                     modifier = Modifier.clickable {
-                                        viewModel.deleteForEveryone(msg.id)
+                                        msgToDelete = msg
                                         showMsgOptionsForMsg = null
                                     }
                                 )
@@ -590,6 +1064,18 @@ fun ChatDetailScreen(
                             Text("Cancel")
                         }
                     }
+                )
+            }
+
+            // Message Delete Confirmation Dialog
+            msgToDelete?.let { msg ->
+                DeleteMessageConfirmationDialog(
+                    isOutgoing = msg.senderId == currentUserId,
+                    onDismiss = { msgToDelete = null },
+                    onDeleteForMe = { viewModel.deleteForMe(msg.id) },
+                    onDeleteForEveryone = if (msg.senderId == currentUserId) {
+                        { viewModel.deleteForEveryone(msg.id) }
+                    } else null
                 )
             }
 
@@ -735,6 +1221,7 @@ fun MessageBubbleRow(
     message: MessageEntity,
     isOutgoing: Boolean,
     currentUserId: String,
+    showExactTimestamps: Boolean = true,
     onLongClick: () -> Unit,
     onReactionClick: () -> Unit
 ) {
@@ -746,8 +1233,9 @@ fun MessageBubbleRow(
 
     val alignment = if (isOutgoing) Alignment.CenterEnd else Alignment.CenterStart
     val horizontalAlignment = if (isOutgoing) Alignment.End else Alignment.Start
-    val formattedTime = remember(message.timestamp) {
-        val sdf = SimpleDateFormat("h:mm a", Locale.getDefault())
+    val formattedTime = remember(message.timestamp, showExactTimestamps) {
+        val pattern = if (showExactTimestamps) "h:mm:ss a" else "h:mm a"
+        val sdf = SimpleDateFormat(pattern, Locale.getDefault())
         sdf.format(Date(message.timestamp))
     }
 
@@ -867,6 +1355,14 @@ fun MessageBubbleRow(
                         if (message.isStarred) {
                             Icon(Icons.Default.Star, contentDescription = "Starred", tint = Color(0xFFFFB800), modifier = Modifier.size(12.dp))
                         }
+                        if (message.isEdited) {
+                            Text(
+                                text = "edited",
+                                fontSize = 9.sp,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
                         Text(
                             text = formattedTime,
                             fontSize = 10.sp,
@@ -897,29 +1393,335 @@ fun MessageBubbleRow(
     }
 }
 
-@Composable
-fun AttachmentOptionItem(
-    title: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    color: Color,
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable { onClick() }
-    ) {
-        Box(
-            modifier = Modifier
-                .size(52.dp)
-                .clip(CircleShape)
-                .background(color),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, contentDescription = title, tint = Color.White)
+data class MessageGroup(
+    val groupKey: String,
+    val senderId: String,
+    val senderName: String,
+    val isOutgoing: Boolean,
+    val messages: List<MessageEntity>
+)
+
+fun groupConsecutiveMessages(messages: List<MessageEntity>, currentUserId: String): List<MessageGroup> {
+    if (messages.isEmpty()) return emptyList()
+
+    val groups = mutableListOf<MessageGroup>()
+    var currentGroupMessages = mutableListOf<MessageEntity>()
+    var currentSenderId: String? = null
+    var lastTimestamp: Long = 0L
+
+    // Max 2 minutes (120,000 ms) to group consecutive messages together
+    val groupingThresholdMs = 120_000L
+
+    for (msg in messages) {
+        val sameSender = msg.senderId == currentSenderId
+        val withinTime = (msg.timestamp - lastTimestamp) <= groupingThresholdMs
+
+        if (currentGroupMessages.isEmpty() || (sameSender && withinTime)) {
+            currentGroupMessages.add(msg)
+            currentSenderId = msg.senderId
+            lastTimestamp = msg.timestamp
+        } else {
+            val isOut = currentSenderId == currentUserId
+            val firstMsg = currentGroupMessages.first()
+            groups.add(
+                MessageGroup(
+                    groupKey = "${firstMsg.id}_${currentGroupMessages.size}",
+                    senderId = currentSenderId ?: "",
+                    senderName = firstMsg.senderName,
+                    isOutgoing = isOut,
+                    messages = currentGroupMessages.toList()
+                )
+            )
+            currentGroupMessages = mutableListOf(msg)
+            currentSenderId = msg.senderId
+            lastTimestamp = msg.timestamp
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(title, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
+
+    if (currentGroupMessages.isNotEmpty()) {
+        val isOut = currentSenderId == currentUserId
+        val firstMsg = currentGroupMessages.first()
+        groups.add(
+            MessageGroup(
+                groupKey = "${firstMsg.id}_${currentGroupMessages.size}",
+                senderId = currentSenderId ?: "",
+                senderName = firstMsg.senderName,
+                isOutgoing = isOut,
+                messages = currentGroupMessages.toList()
+            )
+        )
+    }
+
+    return groups
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun GroupedMessageBubbleRow(
+    group: MessageGroup,
+    isGroupChat: Boolean,
+    searchKeyword: String,
+    currentUserId: String,
+    showExactTimestamps: Boolean = true,
+    onMessageLongClick: (MessageEntity) -> Unit,
+    onReactionClick: (MessageEntity) -> Unit
+) {
+    val isOutgoing = group.isOutgoing
+    val bubbleColor = if (isOutgoing) {
+        if (isSystemInDarkTheme()) DarkOutgoingBubble else LightOutgoingBubble
+    } else {
+        if (isSystemInDarkTheme()) DarkIncomingBubble else LightIncomingBubble
+    }
+
+    val alignment = if (isOutgoing) Alignment.CenterEnd else Alignment.CenterStart
+    val horizontalAlignment = if (isOutgoing) Alignment.End else Alignment.Start
+
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = alignment
+    ) {
+        Column(
+            horizontalAlignment = horizontalAlignment,
+            modifier = Modifier.widthIn(max = 300.dp)
+        ) {
+            // Group Sender Name (shown only for incoming messages in group chats)
+            if (!isOutgoing && isGroupChat && group.senderName.isNotBlank()) {
+                Text(
+                    text = group.senderName,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PulseGreen,
+                    modifier = Modifier.padding(start = 12.dp, bottom = 2.dp)
+                )
+            }
+
+            // Single cohesive bubble housing consecutive messages
+            Box(
+                modifier = Modifier
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isOutgoing) 16.dp else 4.dp,
+                            bottomEnd = if (isOutgoing) 4.dp else 16.dp
+                        )
+                    )
+                    .background(bubbleColor)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    group.messages.forEachIndexed { index, message ->
+                        val formattedTime = remember(message.timestamp, showExactTimestamps) {
+                            val pattern = if (showExactTimestamps) "h:mm:ss a" else "h:mm a"
+                            val sdf = SimpleDateFormat(pattern, Locale.getDefault())
+                            sdf.format(Date(message.timestamp))
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .combinedClickable(
+                                    onClick = { },
+                                    onLongClick = { onMessageLongClick(message) }
+                                )
+                                .padding(vertical = 2.dp)
+                        ) {
+                            // Quoted Reply Block
+                            if (!message.replyToContent.isNullOrEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.Black.copy(alpha = 0.08f))
+                                        .padding(8.dp)
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = message.replyToSenderName ?: "Reply",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PulseGreen
+                                        )
+                                        Text(
+                                            text = message.replyToContent!!,
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+
+                            // Image Content
+                            if (message.type == MessageType.IMAGE.name && message.mediaUrl.isNotBlank()) {
+                                AsyncImage(
+                                    model = message.mediaUrl,
+                                    contentDescription = "Image preview",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(180.dp)
+                                        .clip(RoundedCornerShape(10.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+
+                            // Voice Note Content
+                            if (message.type == MessageType.VOICE_NOTE.name) {
+                                var isPlaying by remember { mutableStateOf(false) }
+                                VoiceNotePlayer(
+                                    duration = "0:14",
+                                    isPlaying = isPlaying,
+                                    onTogglePlay = { isPlaying = !isPlaying }
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+
+                            // Document Content
+                            if (message.type == MessageType.DOCUMENT.name) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.Black.copy(alpha = 0.08f))
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Description, contentDescription = null, tint = PulseGreen)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(message.content, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+
+                            // Text Message Body (with search highlighting)
+                            if (message.type == MessageType.TEXT.name || (message.type == MessageType.IMAGE.name && message.content.isNotBlank() && message.content != "Camera Photo")) {
+                                HighlightedMessageText(
+                                    text = message.content,
+                                    keyword = searchKeyword
+                                )
+                            }
+
+                            // Timestamp, Edited tag, and Status Ticks for each item in the grouped bubble
+                            Row(
+                                modifier = Modifier
+                                    .align(Alignment.End)
+                                    .padding(top = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (message.isStarred) {
+                                    Icon(
+                                        Icons.Default.Star,
+                                        contentDescription = "Starred",
+                                        tint = Color(0xFFFFB800),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                                if (message.isEdited) {
+                                    Text(
+                                        text = "edited",
+                                        fontSize = 9.sp,
+                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                    )
+                                }
+                                Text(
+                                    text = formattedTime,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                                if (isOutgoing) {
+                                    MessageStatusTicks(status = message.status)
+                                }
+                            }
+
+                            // Message Reactions below individual message
+                            val parsedReactions = remember(message.reactions) { parseReactions(message.reactions) }
+                            if (parsedReactions.isNotEmpty()) {
+                                Box(modifier = Modifier.padding(top = 2.dp)) {
+                                    MessageReactionsLayout(
+                                        reactions = parsedReactions,
+                                        currentUserId = currentUserId,
+                                        onReactionClick = { onReactionClick(message) }
+                                    )
+                                }
+                            }
+                        }
+
+                        // Divider between consecutive messages in the same bubble
+                        if (index < group.messages.size - 1) {
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                                thickness = 0.5.dp,
+                                modifier = Modifier.padding(vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HighlightedMessageText(
+    text: String,
+    keyword: String
+) {
+    if (keyword.isBlank() || !text.contains(keyword, ignoreCase = true)) {
+        Text(
+            text = text,
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            lineHeight = 18.sp
+        )
+        return
+    }
+
+    val annotatedString = remember(text, keyword) {
+        buildAnnotatedString {
+            var startIndex = 0
+            val lowerText = text.lowercase(Locale.getDefault())
+            val lowerKeyword = keyword.lowercase(Locale.getDefault())
+            val keywordLength = keyword.length
+
+            while (startIndex < text.length) {
+                val matchIndex = lowerText.indexOf(lowerKeyword, startIndex)
+                if (matchIndex == -1) {
+                    append(text.substring(startIndex))
+                    break
+                }
+
+                if (matchIndex > startIndex) {
+                    append(text.substring(startIndex, matchIndex))
+                }
+
+                withStyle(
+                    style = SpanStyle(
+                        background = Color(0xFFFFD54F),
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold
+                    )
+                ) {
+                    append(text.substring(matchIndex, matchIndex + keywordLength))
+                }
+
+                startIndex = matchIndex + keywordLength
+            }
+        }
+    }
+
+    Text(
+        text = annotatedString,
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurface,
+        lineHeight = 18.sp
+    )
 }
 
 data class UIMessageReaction(

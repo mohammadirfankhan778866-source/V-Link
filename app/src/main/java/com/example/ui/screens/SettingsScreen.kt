@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.PulseAvatar
+import com.example.ui.components.RealtimeConnectivityBadge
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.PulseGreen
 import com.example.ui.viewmodels.MainViewModel
@@ -32,11 +33,14 @@ import com.example.ui.viewmodels.MainViewModel
 @Composable
 fun SettingsScreen(viewModel: MainViewModel) {
     val currentUser by viewModel.currentUser.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
+    val chats by viewModel.chats.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val jwtToken by viewModel.jwtToken.collectAsState()
     val context = LocalContext.current
 
     var showEditProfileModal by remember { mutableStateOf(false) }
+    var showBlockedContactsModal by remember { mutableStateOf(false) }
     var editName by remember { mutableStateOf(currentUser?.displayName ?: "") }
     var editBio by remember { mutableStateOf(currentUser?.bio ?: "") }
     var editAvatarUrl by remember { mutableStateOf(currentUser?.profilePictureUrl ?: "") }
@@ -90,6 +94,10 @@ fun SettingsScreen(viewModel: MainViewModel) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Profile Card
+            val isWsConnected = connectionState == com.example.data.network.WebSocketState.CONNECTED
+            val userOnlineStatus = currentUser?.onlineStatus ?: "ONLINE"
+            val isUserCurrentlyOnline = isWsConnected && userOnlineStatus == "ONLINE"
+
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -97,50 +105,99 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    PulseAvatar(
-                        imageUrl = currentUser?.profilePictureUrl ?: "",
-                        name = currentUser?.displayName ?: "User",
-                        size = 64.dp,
-                        isOnline = true
-                    )
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PulseAvatar(
+                            imageUrl = currentUser?.profilePictureUrl ?: "",
+                            name = currentUser?.displayName ?: "User",
+                            size = 64.dp,
+                            isOnline = isUserCurrentlyOnline
+                        )
 
-                    Spacer(modifier = Modifier.width(16.dp))
+                        Spacer(modifier = Modifier.width(16.dp))
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = currentUser?.displayName ?: "Mohammad Irfan Khan",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (currentUser?.isPremium == true) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(Icons.Default.Star, contentDescription = "Premium User", tint = Color(0xFFFFC107), modifier = Modifier.size(16.dp))
+                                }
+                            }
                             Text(
-                                text = currentUser?.displayName ?: "Mohammad Irfan Khan",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
+                                text = currentUser?.bio ?: "Hey there! I am using Pulse Chat ⚡",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            if (currentUser?.isPremium == true) {
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(Icons.Default.Star, contentDescription = "Premium User", tint = Color(0xFFFFC107), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = currentUser?.username ?: "@irfankhan",
+                                    fontSize = 12.sp,
+                                    color = PulseGreen,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                RealtimeConnectivityBadge(
+                                    isConnected = isWsConnected,
+                                    onlineStatus = userOnlineStatus
+                                )
                             }
                         }
-                        Text(
-                            text = currentUser?.bio ?: "Hey there! I am using Pulse Chat ⚡",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = currentUser?.username ?: "@irfankhan",
-                            fontSize = 12.sp,
-                            color = PulseGreen,
-                            fontWeight = FontWeight.SemiBold
-                        )
+
+                        Icon(Icons.Default.Edit, contentDescription = "Edit Profile", tint = PulseGreen)
                     }
 
-                    Icon(Icons.Default.Edit, contentDescription = "Edit Profile", tint = PulseGreen)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Presence Status Quick-Selector
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Presence Status",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                "ONLINE" to "Online",
+                                "AWAY" to "Away",
+                                "OFFLINE" to "Invisible"
+                            ).forEach { (statusKey, label) ->
+                                val isSelected = userOnlineStatus == statusKey
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { viewModel.updateOnlineStatus(statusKey) },
+                                    label = { Text(label, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = PulseGreen.copy(alpha = 0.2f),
+                                        selectedLabelColor = PulseGreen
+                                    )
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
             // Theme Options Section
+            val showExactTimestamps by viewModel.showExactTimestamps.collectAsState()
+
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp)
@@ -174,6 +231,34 @@ fun SettingsScreen(viewModel: MainViewModel) {
                         ThemeOptionButton("AMOLED", themeMode == AppThemeMode.AMOLED) {
                             viewModel.setThemeMode(AppThemeMode.AMOLED)
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text("Show Exact Timestamps", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text(
+                                "Display exact time (e.g. 10:45 AM) on individual chat messages",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = showExactTimestamps,
+                            onCheckedChange = { viewModel.toggleShowExactTimestamps(it) },
+                            modifier = Modifier.testTag("exact_timestamps_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = PulseGreen
+                            )
+                        )
                     }
                 }
             }
@@ -214,6 +299,9 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 Column(modifier = Modifier.padding(vertical = 8.dp)) {
                     SettingsRow(icon = Icons.Outlined.Key, title = "Account", subtitle = "Privacy, security, change number") {
                         showStatusPrivacyModal = true
+                    }
+                    SettingsRow(icon = Icons.Outlined.Block, title = "Blocked Contacts", subtitle = "Manage blocked users") {
+                        showBlockedContactsModal = true
                     }
                     SettingsRow(icon = Icons.Outlined.Face, title = "Avatar", subtitle = "Create, edit, profile photo") {
                         showEditProfileModal = true
@@ -478,6 +566,47 @@ fun SettingsScreen(viewModel: MainViewModel) {
             )
         }
         
+        // Blocked Contacts Modal
+        if (showBlockedContactsModal) {
+            val blockedChats = chats.filter { it.isBlocked }
+            AlertDialog(
+                onDismissRequest = { showBlockedContactsModal = false },
+                title = { Text("Blocked Contacts", fontWeight = FontWeight.Bold) },
+                text = {
+                    if (blockedChats.isEmpty()) {
+                        Text("No blocked contacts.")
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            blockedChats.forEach { chat ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(chat.title, fontWeight = FontWeight.Bold)
+                                    TextButton(onClick = {
+                                        viewModel.toggleBlockUser(chat.id, false)
+                                    }) {
+                                        Text("Unblock", color = Color.Red)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showBlockedContactsModal = false }) {
+                        Text("Close")
+                    }
+                }
+            )
+        }
+
         // Status Privacy Modal
         if (showStatusPrivacyModal) {
             AlertDialog(

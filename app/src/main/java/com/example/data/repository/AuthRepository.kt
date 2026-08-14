@@ -27,28 +27,30 @@ class AuthRepository(private val context: Context) {
     }
     private val credentialManager = CredentialManager.create(context)
 
-    suspend fun registerWithEmailAndPassword(email: String, password: String): AuthResult? {
-        val fbAuth = auth ?: return null
+    suspend fun registerWithEmailAndPassword(email: String, password: String): Result<AuthResult> {
+        val fbAuth = auth ?: return Result.failure(Exception("Firebase Authentication is not available"))
         return try {
-            fbAuth.createUserWithEmailAndPassword(email, password).await()
-        } catch (e: Exception) {
-            Log.w("AuthRepository", "Error registering with createUserWithEmailAndPassword: ${e.message}")
+            val result = fbAuth.createUserWithEmailAndPassword(email, password).await()
             try {
-                fbAuth.signInWithEmailAndPassword(email, password).await()
-            } catch (e2: Exception) {
-                Log.e("AuthRepository", "Fallback sign-in also failed: ${e2.message}")
-                null
+                result.user?.sendEmailVerification()
+            } catch (e: Exception) {
+                Log.w("AuthRepository", "Email verification send warning: ${e.message}")
             }
+            Result.success(result)
+        } catch (e: Exception) {
+            Log.e("AuthRepository", "Error creating user with createUserWithEmailAndPassword: ${e.message}")
+            Result.failure(e)
         }
     }
 
-    suspend fun signInWithEmailAndPassword(email: String, password: String): AuthResult? {
-        val fbAuth = auth ?: return null
+    suspend fun signInWithEmailAndPassword(email: String, password: String): Result<AuthResult> {
+        val fbAuth = auth ?: return Result.failure(Exception("Firebase Authentication is not available"))
         return try {
-            fbAuth.signInWithEmailAndPassword(email, password).await()
+            val result = fbAuth.signInWithEmailAndPassword(email, password).await()
+            Result.success(result)
         } catch (e: Exception) {
             Log.e("AuthRepository", "Error signing in: ${e.message}")
-            null
+            Result.failure(e)
         }
     }
 
