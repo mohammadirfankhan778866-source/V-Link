@@ -343,6 +343,84 @@ class FirestoreService {
     }
 
     /**
+     * Updates real-time typing status for a user in a specific conversation in Firestore.
+     */
+    suspend fun updateTypingStatusInFirestore(chatId: String, userId: String, userName: String, isTyping: Boolean) {
+        val db = firestore ?: return
+        try {
+            val chatRef = db.collection("chats").document(chatId)
+            if (isTyping) {
+                val typingData = mapOf(
+                    "name" to userName,
+                    "timestamp" to System.currentTimeMillis()
+                )
+                chatRef.set(mapOf("typingUsers" to mapOf(userId to typingData)), com.google.firebase.firestore.SetOptions.merge()).await()
+            } else {
+                chatRef.update("typingUsers.$userId", com.google.firebase.firestore.FieldValue.delete()).await()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating typing status in Firestore: ${e.message}")
+        }
+    }
+
+    /**
+     * Listens for real-time typing state changes in the Firestore document for a specific conversation.
+     */
+    fun observeTypingStatusFromFirestore(chatId: String, currentUserId: String): Flow<List<String>> = callbackFlow {
+        val db = firestore
+        if (db == null) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        val listener = db.collection("chats").document(chatId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null || !snapshot.exists()) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+
+                val typingUsersMap = snapshot.get("typingUsers") as? Map<String, Map<String, Any>>
+                if (typingUsersMap != null) {
+                    val now = System.currentTimeMillis()
+                    val typingNames = typingUsersMap.filter { (uid, data) ->
+                        uid != currentUserId && (now - ((data["timestamp"] as? Long) ?: 0L) < 7000L)
+                    }.values.mapNotNull { it["name"] as? String }
+
+                    trySend(typingNames)
+                } else {
+                    trySend(emptyList())
+                }
+            }
+
+        awaitClose { listener.remove() }
+    }
+
+    /**
+     * Updates message status in Firestore document to 'READ' when a user views the chat screen.
+     */
+    suspend fun markMessagesAsReadInFirestore(chatId: String, currentUserId: String) {
+        val db = firestore ?: return
+        try {
+            val messagesRef = db.collection("chats").document(chatId).collection("messages")
+            val unreadSnapshot = messagesRef
+                .whereNotEqualTo("senderId", currentUserId)
+                .get()
+                .await()
+
+            for (doc in unreadSnapshot.documents) {
+                val status = doc.getString("status")
+                if (status != "READ") {
+                    doc.reference.update("status", "READ").await()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error marking messages as read in Firestore: ${e.message}")
+        }
+    }
+
+    /**
      * Updates user profile fields (displayName, profilePictureUrl, bio) in Firestore document under "users/{userId}"
      */
     suspend fun updateUserProfile(
@@ -364,6 +442,26 @@ class FirestoreService {
             true
         } catch (e: Exception) {
             Log.e(TAG, "Error updating user profile in Firestore: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Updates user's premium tier state and 1-month expiry timestamp in Firestore.
+     */
+    suspend fun updateUserPremiumState(userId: String, isPremium: Boolean, expiryTimestamp: Long): Boolean {
+        val db = firestore ?: return true
+        return try {
+            val userRef = db.collection("users").document(userId)
+            val updates = mapOf(
+                "isPremium" to isPremium,
+                "premiumExpiryTimestamp" to expiryTimestamp,
+                "updatedAt" to System.currentTimeMillis()
+            )
+            userRef.set(updates, com.google.firebase.firestore.SetOptions.merge()).await()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating user premium state in Firestore: ${e.message}")
             false
         }
     }

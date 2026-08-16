@@ -30,6 +30,11 @@ class SessionManager(context: Context) {
     )
     val showExactTimestamps: StateFlow<Boolean> = _showExactTimestamps
 
+    private val _chatWallpaper = MutableStateFlow(
+        prefs.getString(KEY_CHAT_WALLPAPER, "DEFAULT") ?: "DEFAULT"
+    )
+    val chatWallpaper: StateFlow<String> = _chatWallpaper
+
     fun performGoogleSignIn(
         email: String = "mohammadirfankhan778866@gmail.com",
         displayName: String = "Mohammad Irfan Khan",
@@ -103,6 +108,11 @@ class SessionManager(context: Context) {
         _showExactTimestamps.value = show
     }
 
+    fun setChatWallpaper(wallpaper: String) {
+        prefs.edit().putString(KEY_CHAT_WALLPAPER, wallpaper).apply()
+        _chatWallpaper.value = wallpaper
+    }
+
     private fun generateJwt(email: String): String {
         val header = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
         val payload = "eyJzdWIiOiIke2VtYWlsfSIsImF1ZCI6InB1bHNlY2hhdF9hcHAiLCJpYXQiOjE3NDIwMDAwMDB9"
@@ -118,5 +128,6 @@ class SessionManager(context: Context) {
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_SHOW_EXACT_TIMESTAMPS = "show_exact_timestamps"
+        private const val KEY_CHAT_WALLPAPER = "chat_wallpaper"
     }
 }

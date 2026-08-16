@@ -12,13 +12,16 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ripple
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +46,7 @@ fun GlassmorphicFloatingNavigationBar(
     modifier: Modifier = Modifier
 ) {
     val isDark = MaterialTheme.colorScheme.background.red < 0.2f
+    var navMenuExpanded by remember { mutableStateOf(false) }
 
     // Glass background color
     val glassBgColor = if (isDark) {
@@ -171,6 +175,72 @@ fun GlassmorphicFloatingNavigationBar(
                                 fontSize = 11.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                 color = iconTint
+                            )
+                        }
+                    }
+                }
+
+                // 3-Dots Overflow Menu Button for Navigation Bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(horizontal = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val isSettingsSelected = currentTab == NavigationTab.SETTINGS
+                    val settingsTint = if (isSettingsSelected) {
+                        if (isDark) VLinkCyan else VLinkViolet
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (isSettingsSelected) (if (isDark) VLinkCyan.copy(alpha = 0.2f) else VLinkCyan.copy(alpha = 0.15f)) else Color.Transparent)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true, color = VLinkCyan)
+                            ) {
+                                navMenuExpanded = true
+                            }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .testTag("nav_bar_more_options_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "More Options",
+                                tint = settingsTint,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "More",
+                                fontSize = 11.sp,
+                                fontWeight = if (isSettingsSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = settingsTint
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = navMenuExpanded,
+                            onDismissRequest = { navMenuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("App Settings", fontWeight = FontWeight.SemiBold) },
+                                onClick = {
+                                    navMenuExpanded = false
+                                    onTabSelected(NavigationTab.SETTINGS)
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Settings, contentDescription = null, tint = VLinkCyan)
+                                },
+                                modifier = Modifier.testTag("navbar_menu_settings_item")
                             )
                         }
                     }

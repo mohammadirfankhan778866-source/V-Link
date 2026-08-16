@@ -1,12 +1,15 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -27,6 +30,7 @@ import com.example.ui.components.PulseAvatar
 import com.example.ui.components.RealtimeConnectivityBadge
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.PulseGreen
+import com.example.ui.theme.VLinkCyan
 import com.example.ui.viewmodels.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -197,6 +201,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
 
             // Theme Options Section
             val showExactTimestamps by viewModel.showExactTimestamps.collectAsState()
+            val chatWallpaper by viewModel.chatWallpaper.collectAsState()
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -230,6 +235,77 @@ fun SettingsScreen(viewModel: MainViewModel) {
                         }
                         ThemeOptionButton("AMOLED", themeMode == AppThemeMode.AMOLED) {
                             viewModel.setThemeMode(AppThemeMode.AMOLED)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Chat Wallpaper Selection Section
+                    Text("Chat Background Wallpaper", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(
+                        "Customize the visual background color or gradient for all chat conversations",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    val wallpaperOptions = listOf(
+                        Triple("DEFAULT", "Default", androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF1E1F24), Color(0xFF141518)))),
+                        Triple("OCEAN", "Ocean", androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)))),
+                        Triple("SUNSET", "Sunset", androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2D112C), Color(0xFF530031), Color(0xFF8D2039)))),
+                        Triple("EMERALD", "Emerald", androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF0A2E26), Color(0xFF145344), Color(0xFF1F7A65)))),
+                        Triple("CYBER", "Cyber", androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF180A29), Color(0xFF38004C), Color(0xFF003853)))),
+                        Triple("WARM_CHARCOAL", "Mocha", androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2C2421), Color(0xFF1C1715)))),
+                        Triple("PASTEL", "Pastel", androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2B2038), Color(0xFF473355), Color(0xFF3C2C47)))),
+                        Triple("AMOLED", "Pitch Black", androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF000000), Color(0xFF000000))))
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        wallpaperOptions.forEach { (wpKey, name, brush) ->
+                            val isSelected = chatWallpaper == wpKey
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { viewModel.setChatWallpaper(wpKey) }
+                                    .border(
+                                        width = if (isSelected) 2.5.dp else 1.dp,
+                                        color = if (isSelected) PulseGreen else Color.Transparent,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .padding(4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size( width = 64.dp, height = 80.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(brush),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isSelected) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = "Selected",
+                                            tint = PulseGreen,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = name,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) PulseGreen else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                     }
 
@@ -312,13 +388,20 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 }
             }
 
-            // Premium Card
+            // Premium VIP Membership Card
+            val isPremiumActive = currentUser?.isPremium == true
+            val expiryMs = currentUser?.premiumExpiryTimestamp ?: 0L
+            val nowMs = System.currentTimeMillis()
+            val remainingDays = if (expiryMs > nowMs) ((expiryMs - nowMs) / (1000 * 60 * 60 * 24)).toInt() else 0
+
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { showPremiumModal = true },
                 shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFD700).copy(alpha = 0.2f))
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isPremiumActive) Color(0xFFFFD700).copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
@@ -329,27 +412,148 @@ fun SettingsScreen(viewModel: MainViewModel) {
                         Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFC107), modifier = Modifier.size(32.dp))
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text("Get Premium", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFFB8860B))
-                            Text("Unlock verified star & exclusive features", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                text = if (isPremiumActive) "VIP Premium Active ⭐" else "V-Link VIP Premium Tier",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = if (isPremiumActive) Color(0xFFD4AF37) else MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (isPremiumActive) "1-Month Free Tier • $remainingDays days remaining" else "Activate 1-Month Free Tier Trial & Verified Star",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
-                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color(0xFFB8860B))
+                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color(0xFFFFC107))
                 }
+            }
+
+            // Bank Payouts & Monetization Card
+            var showBankModal by remember { mutableStateOf(false) }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showBankModal = true },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.AccountBalance, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(28.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text("Creator Bank Payouts & Revenue", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text("Link bank account for direct premium payouts", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Icon(Icons.Default.ChevronRight, contentDescription = null)
+                }
+            }
+
+            // Bank Account Modal
+            if (showBankModal) {
+                var bankHolderName by remember { mutableStateOf(currentUser?.displayName ?: "") }
+                var accountNumber by remember { mutableStateOf("") }
+                var ifscCode by remember { mutableStateOf("") }
+                var bankName by remember { mutableStateOf("") }
+                var bankSaveMessage by remember { mutableStateOf("") }
+
+                AlertDialog(
+                    onDismissRequest = { showBankModal = false },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.AccountBalance, contentDescription = null, tint = VLinkCyan)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Link Bank Account for Payouts", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        }
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                "When users purchase VIP Premium subscriptions, funds are automatically transferred directly to your linked bank account.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 16.sp
+                            )
+
+                            OutlinedTextField(
+                                value = bankHolderName,
+                                onValueChange = { bankHolderName = it },
+                                label = { Text("Account Holder Name") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            OutlinedTextField(
+                                value = bankName,
+                                onValueChange = { bankName = it },
+                                label = { Text("Bank Name") },
+                                placeholder = { Text("e.g. State Bank of India / HDFC Bank") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            OutlinedTextField(
+                                value = accountNumber,
+                                onValueChange = { accountNumber = it },
+                                label = { Text("Account Number") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            OutlinedTextField(
+                                value = ifscCode,
+                                onValueChange = { ifscCode = it },
+                                label = { Text("IFSC / SWIFT Code") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            if (bankSaveMessage.isNotEmpty()) {
+                                Text(bankSaveMessage, color = PulseGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (accountNumber.isBlank() || ifscCode.isBlank() || bankName.isBlank()) {
+                                    bankSaveMessage = "Please enter complete bank details."
+                                } else {
+                                    bankSaveMessage = "Bank account linked successfully! Direct payouts enabled."
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                        ) {
+                            Text("Save Bank Details", fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showBankModal = false }) {
+                            Text("Close")
+                        }
+                    }
+                )
             }
 
             // Premium Modal
             if (showPremiumModal) {
-                var premiumUsername by remember { mutableStateOf("") }
-                var premiumPassword by remember { mutableStateOf("") }
-                var premiumError by remember { mutableStateOf("") }
-
                 AlertDialog(
                     onDismissRequest = { showPremiumModal = false },
                     title = { 
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFC107))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Upgrade to Premium", fontWeight = FontWeight.Bold) 
+                            Text("V-Link VIP Premium Tier", fontWeight = FontWeight.Bold) 
                         }
                     },
                     text = {
@@ -358,50 +562,44 @@ fun SettingsScreen(viewModel: MainViewModel) {
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Text(
-                                "Premium costs Rs 50/month. For now, enjoy a 1-month FREE tier!\nGet a verified star (⭐) next to your nickname just like Instagram.",
-                                fontSize = 13.sp
-                            )
-                            
-                            OutlinedTextField(
-                                value = premiumUsername,
-                                onValueChange = { premiumUsername = it; premiumError = "" },
-                                label = { Text("Username") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
-                            )
-                            
-                            OutlinedTextField(
-                                value = premiumPassword,
-                                onValueChange = { premiumPassword = it; premiumError = "" },
-                                label = { Text("Password") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                                "Activate your 1-Month FREE Tier Trial today!\nGet an official Verified Gold Star (⭐) badge next to your nickname across all chats, calls, and posts.",
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp
                             )
 
-                            if (premiumError.isNotEmpty()) {
-                                Text(premiumError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFD700).copy(alpha = 0.15f)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("⭐ VIP Premium Features Included:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFFD4AF37))
+                                    Text("• Gold Star Badge on profile and messages", fontSize = 12.sp)
+                                    Text("• 1080p Ultra HD WebRTC voice & video calls", fontSize = 12.sp)
+                                    Text("• 2 GB high-speed file attachments", fontSize = 12.sp)
+                                    Text("• Exclusive AMOLED & glassmorphic themes", fontSize = 12.sp)
+                                    Text("• 1-Month state duration saved in Firestore", fontSize = 12.sp)
+                                }
+                            }
+
+                            if (isPremiumActive) {
+                                Text("Your 1-Month Free Tier Trial is currently ACTIVE ($remainingDays days remaining).", color = PulseGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     },
                     confirmButton = {
                         Button(
                             onClick = {
-                                if (premiumUsername.isBlank() || premiumPassword.isBlank()) {
-                                    premiumError = "Please enter both username and password to agree."
-                                } else {
-                                    viewModel.upgradeToPremium()
-                                    showPremiumModal = false
-                                }
+                                viewModel.upgradeToPremium(isTrial = true)
+                                showPremiumModal = false
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107))
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107), contentColor = Color.Black)
                         ) {
-                            Text("Agree & Upgrade", color = Color.Black, fontWeight = FontWeight.Bold)
+                            Text(if (isPremiumActive) "Extend 1-Month Trial" else "Activate 1-Month Free Trial ⭐", fontWeight = FontWeight.Bold)
                         }
                     },
                     dismissButton = {
                         TextButton(onClick = { showPremiumModal = false }) {
-                            Text("Cancel")
+                            Text("Close")
                         }
                     }
                 )

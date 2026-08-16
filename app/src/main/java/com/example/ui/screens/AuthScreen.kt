@@ -45,6 +45,7 @@ fun AuthScreen(
 
     var authMode by remember { mutableStateOf(0) } // 0 = Log In, 1 = Create Account
     var isSubmitting by remember { mutableStateOf(false) }
+    var submitProgressText by remember { mutableStateOf("") }
 
     // Log In states
     var loginBackHandleInput by remember { mutableStateOf("") }
@@ -68,10 +69,42 @@ fun AuthScreen(
     var forgotPasswordMessage by remember { mutableStateOf("") }
     var forgotPasswordIsSuccess by remember { mutableStateOf(false) }
 
+    // Real-time checks: Username
     var isCheckingUsername by remember { mutableStateOf(false) }
     var usernameStatusText by remember { mutableStateOf("") }
     var isUsernameAvailable by remember { mutableStateOf<Boolean?>(null) }
+
+    // Real-time checks: Email
+    var isCheckingEmail by remember { mutableStateOf(false) }
+    var emailStatusText by remember { mutableStateOf("") }
+    var isEmailAvailable by remember { mutableStateOf<Boolean?>(null) }
+
     var registrationErrorMessage by remember { mutableStateOf("") }
+
+    // Real-time Email & Password calculations
+    val isLoginEmail = loginBackHandleInput.contains("@") && !loginBackHandleInput.startsWith("@")
+    val isLoginHandle = loginBackHandleInput.startsWith("@") || (!isLoginEmail && loginBackHandleInput.isNotBlank())
+    val isLoginInputValid = if (isLoginEmail) {
+        android.util.Patterns.EMAIL_ADDRESS.matcher(loginBackHandleInput.trim()).matches()
+    } else {
+        loginBackHandleInput.trim().removePrefix("@").length >= 3
+    }
+
+    val isRegEmailValidFormat = emailInput.isNotBlank() && android.util.Patterns.EMAIL_ADDRESS.matcher(emailInput.trim()).matches()
+
+    // Real-time password strength (0: None, 1: Weak, 2: Fair, 3: Strong)
+    val passwordStrength = remember(registerPasswordInput) {
+        if (registerPasswordInput.isEmpty()) 0
+        else {
+            var score = 1
+            if (registerPasswordInput.length >= 8) score++
+            if (registerPasswordInput.any { it.isDigit() } && registerPasswordInput.any { it.isLetter() }) score++
+            if (registerPasswordInput.any { !it.isLetterOrDigit() } || registerPasswordInput.any { it.isUpperCase() }) score++
+            score.coerceIn(1, 3)
+        }
+    }
+
+    val passwordsMatch = registerPasswordInput.isNotEmpty() && confirmPasswordInput.isNotEmpty() && registerPasswordInput == confirmPasswordInput
 
     // Debounced username availability check
     LaunchedEffect(usernameInput) {
@@ -83,13 +116,38 @@ fun AuthScreen(
         }
 
         isCheckingUsername = true
-        usernameStatusText = "Checking availability in Firestore..."
-        delay(400) // Debounce typing
+        usernameStatusText = "Checking handle availability..."
+        delay(350) // Debounce typing
 
         val available = viewModel.checkUsernameAvailable(clean)
         isCheckingUsername = false
         isUsernameAvailable = available
-        usernameStatusText = if (available) "✅ @$clean is available!" else "❌ @$clean is already taken!"
+        usernameStatusText = if (available) "✅ @$clean is available!" else "❌ @$clean is already registered"
+    }
+
+    // Debounced registration email availability check
+    LaunchedEffect(emailInput) {
+        val clean = emailInput.trim().lowercase()
+        if (clean.isEmpty()) {
+            isEmailAvailable = null
+            emailStatusText = ""
+            return@LaunchedEffect
+        }
+
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(clean).matches()) {
+            isEmailAvailable = false
+            emailStatusText = "⚠️ Please enter a valid email (e.g. name@domain.com)"
+            return@LaunchedEffect
+        }
+
+        isCheckingEmail = true
+        emailStatusText = "Verifying email availability..."
+        delay(350)
+
+        val available = viewModel.checkEmailAvailable(clean)
+        isCheckingEmail = false
+        isEmailAvailable = available
+        emailStatusText = if (available) "✅ Email is available for registration" else "❌ An account with this email already exists"
     }
 
     Surface(
@@ -301,52 +359,102 @@ fun AuthScreen(
                     if (authMode == 0) {
                         // MODE 0: LOG IN BACK
                         Column(
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "Welcome back! Enter your handle (@username) or email address, and your password to sign in.",
+                                text = "Welcome back! Enter your handle (@username) or registered email address, and your password to sign in.",
                                 fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 17.sp
                             )
 
-                            OutlinedTextField(
-                                value = loginBackHandleInput,
-                                onValueChange = { 
-                                    loginBackHandleInput = it 
-                                    loginBackErrorMessage = ""
-                                },
-                                label = { Text("Username or Email") },
-                                placeholder = { Text("e.g. @irfan_vlink or email@domain.com") },
-                                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = VLinkCyan) },
-                                singleLine = true,
-                                enabled = !isSubmitting,
-                                modifier = Modifier.fillMaxWidth().testTag("login_back_inline_input")
-                            )
-
-                            OutlinedTextField(
-                                value = loginPasswordInput,
-                                onValueChange = { 
-                                    loginPasswordInput = it 
-                                    loginBackErrorMessage = ""
-                                },
-                                label = { Text("Password") },
-                                placeholder = { Text("Enter your account password") },
-                                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
-                                trailingIcon = {
-                                    IconButton(onClick = { loginPasswordVisible = !loginPasswordVisible }) {
+                            // Username or Email Field with real-time feedback
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                OutlinedTextField(
+                                    value = loginBackHandleInput,
+                                    onValueChange = { 
+                                        loginBackHandleInput = it 
+                                        loginBackErrorMessage = ""
+                                    },
+                                    label = { Text("Username or Email") },
+                                    placeholder = { Text("e.g. @irfan or email@domain.com") },
+                                    leadingIcon = { 
                                         Icon(
-                                            imageVector = if (loginPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                            contentDescription = if (loginPasswordVisible) "Hide password" else "Show password",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                            if (isLoginEmail) Icons.Default.Email else Icons.Default.Person, 
+                                            contentDescription = null, 
+                                            tint = VLinkCyan 
+                                        ) 
+                                    },
+                                    trailingIcon = {
+                                        if (loginBackHandleInput.isNotBlank()) {
+                                            if (isLoginInputValid) {
+                                                Icon(Icons.Default.CheckCircle, contentDescription = "Valid format", tint = PulseGreen)
+                                            } else {
+                                                Icon(Icons.Default.Info, contentDescription = "Invalid format", tint = MaterialTheme.colorScheme.error)
+                                            }
+                                        }
+                                    },
+                                    singleLine = true,
+                                    enabled = !isSubmitting,
+                                    isError = loginBackHandleInput.isNotBlank() && !isLoginInputValid,
+                                    modifier = Modifier.fillMaxWidth().testTag("login_back_inline_input")
+                                )
+
+                                if (loginBackHandleInput.isNotBlank()) {
+                                    val helperColor = if (isLoginInputValid) PulseGreen else MaterialTheme.colorScheme.error
+                                    val helperText = when {
+                                        isLoginEmail && isLoginInputValid -> "✓ Valid email format detected"
+                                        isLoginEmail && !isLoginInputValid -> "⚠️ Incomplete email address (e.g. name@domain.com)"
+                                        !isLoginEmail && isLoginInputValid -> "✓ Valid username handle format"
+                                        else -> "⚠️ Username must be at least 3 characters"
                                     }
-                                },
-                                visualTransformation = if (loginPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                singleLine = true,
-                                enabled = !isSubmitting,
-                                modifier = Modifier.fillMaxWidth().testTag("login_back_password_input")
-                            )
+                                    Text(
+                                        text = helperText,
+                                        fontSize = 11.sp,
+                                        color = helperColor,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(start = 8.dp)
+                                    )
+                                }
+                            }
+
+                            // Password Field with real-time feedback
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                OutlinedTextField(
+                                    value = loginPasswordInput,
+                                    onValueChange = { 
+                                        loginPasswordInput = it 
+                                        loginBackErrorMessage = ""
+                                    },
+                                    label = { Text("Password") },
+                                    placeholder = { Text("Enter your account password") },
+                                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
+                                    trailingIcon = {
+                                        IconButton(onClick = { loginPasswordVisible = !loginPasswordVisible }) {
+                                            Icon(
+                                                imageVector = if (loginPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                                contentDescription = if (loginPasswordVisible) "Hide password" else "Show password",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    visualTransformation = if (loginPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                    singleLine = true,
+                                    enabled = !isSubmitting,
+                                    modifier = Modifier.fillMaxWidth().testTag("login_back_password_input")
+                                )
+
+                                if (loginPasswordInput.isNotBlank() && loginPasswordInput.length < 6) {
+                                    Text(
+                                        text = "⚠️ Password must be at least 6 characters",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(start = 8.dp)
+                                    )
+                                }
+                            }
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -354,13 +462,15 @@ fun AuthScreen(
                             ) {
                                 TextButton(
                                     onClick = {
-                                        forgotPasswordInput = if (loginBackHandleInput.isNotBlank()) loginBackHandleInput else ""
+                                        forgotPasswordInput = if (loginBackHandleInput.contains("@") && loginBackHandleInput.contains(".")) loginBackHandleInput else ""
                                         forgotPasswordMessage = ""
                                         forgotPasswordIsSuccess = false
                                         showForgotPasswordDialog = true
                                     },
                                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
                                 ) {
+                                    Icon(Icons.Default.LockReset, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = "Forgot Password?",
                                         color = VLinkCyan,
@@ -392,6 +502,33 @@ fun AuthScreen(
                                 }
                             }
 
+                            if (isSubmitting) {
+                                Surface(
+                                    color = VLinkViolet.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp,
+                                            color = VLinkCyan
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text(
+                                            text = submitProgressText.ifEmpty { "Authenticating with Firebase..." },
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+
                             Button(
                                 onClick = {
                                     if (loginBackHandleInput.isBlank() || loginPasswordInput.isBlank()) {
@@ -399,6 +536,7 @@ fun AuthScreen(
                                         return@Button
                                     }
                                     isSubmitting = true
+                                    submitProgressText = "Verifying Firebase authentication..."
                                     loginBackErrorMessage = ""
                                     coroutineScope.launch {
                                         val result = viewModel.performLoginBack(loginBackHandleInput, loginPasswordInput)
@@ -418,6 +556,8 @@ fun AuthScreen(
                             ) {
                                 if (isSubmitting) {
                                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Signing In...", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 } else {
                                     Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
@@ -428,155 +568,269 @@ fun AuthScreen(
                     } else {
                         // MODE 1: CREATE ACCOUNT
                         Column(
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = "1. Unique Username (@handle)",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            OutlinedTextField(
-                                value = usernameInput,
-                                onValueChange = { 
-                                    usernameInput = it 
-                                    registrationErrorMessage = ""
-                                },
-                                label = { Text("Unique Handle (@username)") },
-                                placeholder = { Text("e.g. irfan_vlink") },
-                                leadingIcon = { Text("@", fontWeight = FontWeight.Bold, color = VLinkCyan, modifier = Modifier.padding(start = 12.dp)) },
-                                trailingIcon = {
-                                    if (isCheckingUsername) {
-                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                                    } else if (isUsernameAvailable == true) {
-                                        Icon(Icons.Default.CheckCircle, contentDescription = "Available", tint = PulseGreen)
-                                    } else if (isUsernameAvailable == false) {
-                                        Icon(Icons.Default.Error, contentDescription = "Taken", tint = MaterialTheme.colorScheme.error)
-                                    }
-                                },
-                                singleLine = true,
-                                enabled = !isSubmitting,
-                                modifier = Modifier.fillMaxWidth().testTag("reg_username_inline_input")
-                            )
-
-                            if (usernameStatusText.isNotEmpty()) {
+                            // 1. Username
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(
-                                    text = usernameStatusText,
+                                    text = "1. Unique Username (@handle)",
                                     fontSize = 11.sp,
-                                    color = when (isUsernameAvailable) {
-                                        true -> PulseGreen
-                                        false -> MaterialTheme.colorScheme.error
-                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                OutlinedTextField(
+                                    value = usernameInput,
+                                    onValueChange = { 
+                                        usernameInput = it 
+                                        registrationErrorMessage = ""
                                     },
-                                    fontWeight = FontWeight.Bold
+                                    label = { Text("Unique Handle (@username)") },
+                                    placeholder = { Text("e.g. irfan_vlink") },
+                                    leadingIcon = { Text("@", fontWeight = FontWeight.Bold, color = VLinkCyan, modifier = Modifier.padding(start = 12.dp)) },
+                                    trailingIcon = {
+                                        if (isCheckingUsername) {
+                                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = VLinkCyan)
+                                        } else if (isUsernameAvailable == true) {
+                                            Icon(Icons.Default.CheckCircle, contentDescription = "Available", tint = PulseGreen)
+                                        } else if (isUsernameAvailable == false) {
+                                            Icon(Icons.Default.Cancel, contentDescription = "Taken", tint = MaterialTheme.colorScheme.error)
+                                        }
+                                    },
+                                    singleLine = true,
+                                    enabled = !isSubmitting,
+                                    isError = isUsernameAvailable == false,
+                                    modifier = Modifier.fillMaxWidth().testTag("reg_username_inline_input")
+                                )
+
+                                if (usernameStatusText.isNotEmpty()) {
+                                    Text(
+                                        text = usernameStatusText,
+                                        fontSize = 11.sp,
+                                        color = when (isUsernameAvailable) {
+                                            true -> PulseGreen
+                                            false -> MaterialTheme.colorScheme.error
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(start = 8.dp)
+                                    )
+                                }
+                            }
+
+                            // 2. Nick Name
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = "2. Nick Name / Display Name",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                OutlinedTextField(
+                                    value = displayNameInput,
+                                    onValueChange = { 
+                                        displayNameInput = it 
+                                        registrationErrorMessage = ""
+                                    },
+                                    label = { Text("Nick Name") },
+                                    placeholder = { Text("e.g. Mohammad Irfan Khan") },
+                                    leadingIcon = { Icon(Icons.Default.Badge, contentDescription = null, tint = VLinkCyan) },
+                                    trailingIcon = {
+                                        if (displayNameInput.isNotBlank()) {
+                                            Icon(Icons.Default.CheckCircle, contentDescription = "Valid", tint = PulseGreen)
+                                        }
+                                    },
+                                    singleLine = true,
+                                    enabled = !isSubmitting,
+                                    modifier = Modifier.fillMaxWidth().testTag("reg_display_name_inline_input")
                                 )
                             }
 
-                            Text(
-                                text = "2. Nick Name / Full Name",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            // 3. Email Address with Real-Time Validation
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = "3. Email Address (Verified via Firebase)",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
 
-                            OutlinedTextField(
-                                value = displayNameInput,
-                                onValueChange = { 
-                                    displayNameInput = it 
-                                    registrationErrorMessage = ""
-                                },
-                                label = { Text("Nick Name") },
-                                placeholder = { Text("e.g. Mohammad Irfan Khan") },
-                                leadingIcon = { Icon(Icons.Default.Badge, contentDescription = null, tint = VLinkCyan) },
-                                singleLine = true,
-                                enabled = !isSubmitting,
-                                modifier = Modifier.fillMaxWidth().testTag("reg_display_name_inline_input")
-                            )
+                                OutlinedTextField(
+                                    value = emailInput,
+                                    onValueChange = { 
+                                        emailInput = it 
+                                        registrationErrorMessage = ""
+                                    },
+                                    label = { Text("Email Address") },
+                                    placeholder = { Text("e.g. name@domain.com") },
+                                    leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
+                                    trailingIcon = {
+                                        if (isCheckingEmail) {
+                                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = VLinkCyan)
+                                        } else if (isEmailAvailable == true) {
+                                            Icon(Icons.Default.CheckCircle, contentDescription = "Email Available", tint = PulseGreen)
+                                        } else if (isEmailAvailable == false && emailInput.isNotBlank()) {
+                                            Icon(Icons.Default.Cancel, contentDescription = "Email Unavailable", tint = MaterialTheme.colorScheme.error)
+                                        }
+                                    },
+                                    singleLine = true,
+                                    enabled = !isSubmitting,
+                                    isError = emailInput.isNotBlank() && isEmailAvailable == false,
+                                    modifier = Modifier.fillMaxWidth().testTag("reg_email_inline_input")
+                                )
 
-                            Text(
-                                text = "3. Email Address",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                                if (emailStatusText.isNotEmpty()) {
+                                    Text(
+                                        text = emailStatusText,
+                                        fontSize = 11.sp,
+                                        color = when (isEmailAvailable) {
+                                            true -> PulseGreen
+                                            false -> MaterialTheme.colorScheme.error
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(start = 8.dp)
+                                    )
+                                }
+                            }
 
-                            OutlinedTextField(
-                                value = emailInput,
-                                onValueChange = { 
-                                    emailInput = it 
-                                    registrationErrorMessage = ""
-                                },
-                                label = { Text("Email Address") },
-                                placeholder = { Text("e.g. mohammadirfankhan778866@gmail.com") },
-                                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
-                                singleLine = true,
-                                enabled = !isSubmitting,
-                                modifier = Modifier.fillMaxWidth().testTag("reg_email_inline_input")
-                            )
+                            // 4. Password with Real-Time Strength Meter
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "4. Password (min 6 characters)",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
 
-                            Text(
-                                text = "4. Password (min 6 characters)",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                                OutlinedTextField(
+                                    value = registerPasswordInput,
+                                    onValueChange = { 
+                                        registerPasswordInput = it 
+                                        registrationErrorMessage = ""
+                                    },
+                                    label = { Text("Password") },
+                                    placeholder = { Text("Enter a secure password") },
+                                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
+                                    trailingIcon = {
+                                        IconButton(onClick = { registerPasswordVisible = !registerPasswordVisible }) {
+                                            Icon(
+                                                imageVector = if (registerPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                                contentDescription = if (registerPasswordVisible) "Hide password" else "Show password",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    visualTransformation = if (registerPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                    singleLine = true,
+                                    enabled = !isSubmitting,
+                                    modifier = Modifier.fillMaxWidth().testTag("reg_password_inline_input")
+                                )
 
-                            OutlinedTextField(
-                                value = registerPasswordInput,
-                                onValueChange = { 
-                                    registerPasswordInput = it 
-                                    registrationErrorMessage = ""
-                                },
-                                label = { Text("Password") },
-                                placeholder = { Text("Enter your password") },
-                                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
-                                trailingIcon = {
-                                    IconButton(onClick = { registerPasswordVisible = !registerPasswordVisible }) {
-                                        Icon(
-                                            imageVector = if (registerPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                            contentDescription = if (registerPasswordVisible) "Hide password" else "Show password",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                if (registerPasswordInput.isNotEmpty()) {
+                                    // Password Strength Bar
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = when (passwordStrength) {
+                                                    1 -> "Strength: Weak (add letters & numbers)"
+                                                    2 -> "Strength: Fair (add symbols or uppercase)"
+                                                    else -> "Strength: Strong 🔒"
+                                                },
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = when (passwordStrength) {
+                                                    1 -> MaterialTheme.colorScheme.error
+                                                    2 -> Color(0xFFFF9800)
+                                                    else -> PulseGreen
+                                                }
+                                            )
+                                            Text(
+                                                text = "${registerPasswordInput.length} chars",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            for (i in 1..3) {
+                                                val barColor = when {
+                                                    i <= passwordStrength && passwordStrength == 1 -> MaterialTheme.colorScheme.error
+                                                    i <= passwordStrength && passwordStrength == 2 -> Color(0xFFFF9800)
+                                                    i <= passwordStrength -> PulseGreen
+                                                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .height(4.dp)
+                                                        .clip(RoundedCornerShape(2.dp))
+                                                        .background(barColor)
+                                                )
+                                            }
+                                        }
                                     }
-                                },
-                                visualTransformation = if (registerPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                singleLine = true,
-                                enabled = !isSubmitting,
-                                modifier = Modifier.fillMaxWidth().testTag("reg_password_inline_input")
-                            )
+                                }
+                            }
 
-                            Text(
-                                text = "5. Confirm Password",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            // 5. Confirm Password with Real-Time Match Status
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "5. Confirm Password",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
 
-                            OutlinedTextField(
-                                value = confirmPasswordInput,
-                                onValueChange = { 
-                                    confirmPasswordInput = it 
-                                    registrationErrorMessage = ""
-                                },
-                                label = { Text("Confirm Password") },
-                                placeholder = { Text("Re-enter your password") },
-                                leadingIcon = { Icon(Icons.Default.LockClock, contentDescription = null, tint = VLinkCyan) },
-                                trailingIcon = {
-                                    IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
-                                        Icon(
-                                            imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                            contentDescription = if (confirmPasswordVisible) "Hide password" else "Show password",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                },
-                                visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                singleLine = true,
-                                enabled = !isSubmitting,
-                                modifier = Modifier.fillMaxWidth().testTag("reg_confirm_password_inline_input")
-                            )
+                                OutlinedTextField(
+                                    value = confirmPasswordInput,
+                                    onValueChange = { 
+                                        confirmPasswordInput = it 
+                                        registrationErrorMessage = ""
+                                    },
+                                    label = { Text("Confirm Password") },
+                                    placeholder = { Text("Re-enter your password") },
+                                    leadingIcon = { Icon(Icons.Default.LockClock, contentDescription = null, tint = VLinkCyan) },
+                                    trailingIcon = {
+                                        IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
+                                            Icon(
+                                                imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                                contentDescription = if (confirmPasswordVisible) "Hide password" else "Show password",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                    singleLine = true,
+                                    enabled = !isSubmitting,
+                                    isError = confirmPasswordInput.isNotEmpty() && !passwordsMatch,
+                                    modifier = Modifier.fillMaxWidth().testTag("reg_confirm_password_inline_input")
+                                )
+
+                                if (confirmPasswordInput.isNotEmpty()) {
+                                    val matchText = if (passwordsMatch) "✓ Passwords match" else "⚠️ Passwords do not match yet"
+                                    val matchColor = if (passwordsMatch) PulseGreen else MaterialTheme.colorScheme.error
+                                    Text(
+                                        text = matchText,
+                                        fontSize = 11.sp,
+                                        color = matchColor,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(start = 8.dp)
+                                    )
+                                }
+                            }
 
                             if (registrationErrorMessage.isNotEmpty()) {
                                 Surface(
@@ -594,6 +848,33 @@ fun AuthScreen(
                                             text = registrationErrorMessage,
                                             color = MaterialTheme.colorScheme.onErrorContainer,
                                             fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (isSubmitting) {
+                                Surface(
+                                    color = VLinkCyan.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp,
+                                            color = VLinkCyan
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text(
+                                            text = submitProgressText.ifEmpty { "Registering with Firebase Auth..." },
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium
                                         )
                                     }
@@ -618,8 +899,12 @@ fun AuthScreen(
                                         registrationErrorMessage = "Please enter your email address."
                                         return@Button
                                     }
-                                    if (!android.util.Patterns.EMAIL_ADDRESS.matcher(emailInput.trim()).matches()) {
+                                    if (!isRegEmailValidFormat) {
                                         registrationErrorMessage = "Please enter a valid email format (e.g. name@domain.com)."
+                                        return@Button
+                                    }
+                                    if (isEmailAvailable == false) {
+                                        registrationErrorMessage = "This email is already registered. Please log in or use another email."
                                         return@Button
                                     }
                                     if (registerPasswordInput.isBlank()) {
@@ -636,6 +921,7 @@ fun AuthScreen(
                                     }
 
                                     isSubmitting = true
+                                    submitProgressText = "Creating account in Firebase Auth..."
                                     registrationErrorMessage = ""
                                     coroutineScope.launch {
                                         val result = viewModel.registerUserWithUniqueUsername(
@@ -660,6 +946,8 @@ fun AuthScreen(
                             ) {
                                 if (isSubmitting) {
                                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.Black)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Creating Account...", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 } else {
                                     Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
@@ -698,7 +986,7 @@ fun AuthScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text = "Enter your registered email address or @username. We will send a secure password reset link directly to your email.",
+                        text = "Enter your registered email address below. A secure password reset link will be sent directly to your email inbox.",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 18.sp
@@ -710,12 +998,12 @@ fun AuthScreen(
                             forgotPasswordInput = it
                             forgotPasswordMessage = ""
                         },
-                        label = { Text("Email or @username") },
-                        placeholder = { Text("e.g. name@domain.com or @irfan") },
+                        label = { Text("Registered Email Address") },
+                        placeholder = { Text("e.g. name@domain.com") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
                         singleLine = true,
                         enabled = !isSendingResetLink,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().testTag("forgot_password_email_input")
                     )
 
                     if (forgotPasswordMessage.isNotEmpty()) {
@@ -739,7 +1027,12 @@ fun AuthScreen(
                 Button(
                     onClick = {
                         if (forgotPasswordInput.isBlank()) {
-                            forgotPasswordMessage = "Please enter your email or username."
+                            forgotPasswordMessage = "Please enter your registered email address."
+                            forgotPasswordIsSuccess = false
+                            return@Button
+                        }
+                        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(forgotPasswordInput.trim()).matches()) {
+                            forgotPasswordMessage = "Please enter a valid email format (e.g. user@example.com)."
                             forgotPasswordIsSuccess = false
                             return@Button
                         }

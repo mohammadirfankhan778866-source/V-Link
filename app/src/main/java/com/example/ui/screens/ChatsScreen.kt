@@ -29,6 +29,7 @@ import com.example.ui.components.PulseAvatar
 import com.example.ui.theme.PulseGreen
 import com.example.ui.theme.VLinkCyan
 import com.example.ui.viewmodels.MainViewModel
+import com.example.ui.viewmodels.NavigationTab
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -127,6 +128,15 @@ fun ChatsScreen(
                                     viewModel.toggleAdminDashboard(true)
                                 },
                                 leadingIcon = { Icon(Icons.Outlined.Analytics, contentDescription = null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Settings") },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.selectTab(NavigationTab.SETTINGS)
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
+                                modifier = Modifier.testTag("menu_settings_item")
                             )
                         }
                     }

@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 
 enum class NavigationTab {
-    CHATS, UPDATES, POSTS, CHANNELS, CALLS
+    CHATS, UPDATES, POSTS, CHANNELS, CALLS, SETTINGS
 }
 
 data class TempGoogleUser(
@@ -36,6 +36,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val jwtToken = sessionManager.jwtToken
     val themeMode = sessionManager.themeMode
     val showExactTimestamps = sessionManager.showExactTimestamps
+    val chatWallpaper = sessionManager.chatWallpaper
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -338,8 +339,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentTab.value = tab
     }
 
+    private var activeChatFirestoreJob: kotlinx.coroutines.Job? = null
+
     fun openChatDetail(chatId: String) {
         _activeChatId.value = chatId
+        markChatAsRead(chatId)
+
+        // Listen to real-time typing status and message read receipt updates from Firestore for this chat
+        activeChatFirestoreJob?.cancel()
+        activeChatFirestoreJob = viewModelScope.launch(Dispatchers.IO) {
+            val user = currentUser.value
+            val currentUserId = user?.id ?: "usr_google_irfan_9075"
+
+            // 1. Observe real-time typing status
+            launch {
+                firestoreService.observeTypingStatusFromFirestore(chatId, currentUserId).collect { typingUsers ->
+                    val typingText = if (typingUsers.isNotEmpty()) {
+                        if (typingUsers.size == 1) {
+                            "${typingUsers[0]} is typing..."
+                        } else {
+                            "${typingUsers.joinToString(", ")} are typing..."
+                        }
+                    } else ""
+                    repository.setTypingStatus(chatId, typingText)
+                }
+            }
+
+            // 2. Observe real-time messages from Firestore and update status (read receipts)
+            launch {
+                firestoreService.observeChatMessages(chatId).collect { msgMaps ->
+                    for (map in msgMaps) {
+                        val msgId = map["id"] as? String ?: continue
+                        val status = map["status"] as? String ?: continue
+                        repository.database.messageDao().updateMessageStatus(msgId, status)
+                    }
+                }
+            }
+        }
     }
 
     fun startChatWithContact(contact: UserEntity) {
@@ -358,7 +394,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 repository.database.chatDao().insertOrUpdateChat(newChat)
             }
-            _activeChatId.value = chatId
+            openChatDetail(chatId)
         }
     }
 
@@ -382,6 +418,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeChatDetail() {
+        val currentChatId = _activeChatId.value
+        if (currentChatId != null) {
+            setUserTyping(currentChatId, false)
+        }
+        activeChatFirestoreJob?.cancel()
+        activeChatFirestoreJob = null
         _activeChatId.value = null
         _replyingToMessage.value = null
     }
@@ -398,6 +440,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sessionManager.setThemeMode(mode)
     }
 
+    fun setChatWallpaper(wallpaper: String) {
+        sessionManager.setChatWallpaper(wallpaper)
+    }
+
     fun setReplyingMessage(message: MessageEntity?) {
         _replyingToMessage.value = message
     }
@@ -410,6 +456,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val reply = _replyingToMessage.value
         viewModelScope.launch {
+            val user = currentUser.value
+            val currentUserId = user?.id ?: "usr_google_irfan_9075"
+            val currentUserName = user?.displayName ?: "Mohammad Irfan Khan"
+            val currentUserAvatar = user?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300"
+
+            val msgId = "msg_" + java.util.UUID.randomUUID().toString().take(8)
+            val currentTime = System.currentTimeMillis()
+
+            val msgEntity = MessageEntity(
+                id = msgId,
+                chatId = chatId,
+                senderId = currentUserId,
+                senderName = currentUserName,
+                senderAvatar = currentUserAvatar,
+                content = content,
+                timestamp = currentTime,
+                status = MessageStatus.SENT.name,
+                type = type.name,
+                mediaUrl = mediaUrl,
+                replyToMessageId = reply?.id,
+                replyToSenderName = reply?.senderName,
+                replyToContent = reply?.content
+            )
+
+            // Save to Firestore for real-time sync across devices
+            firestoreService.saveMessage(chatId, msgEntity)
+
             repository.sendMessage(
                 chatId = chatId,
                 content = content,
@@ -522,13 +595,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val user = currentUser.value
             val currentUserId = user?.id ?: "usr_google_irfan_9075"
             repository.markChatAsRead(chatId, currentUserId)
+            firestoreService.markMessagesAsReadInFirestore(chatId, currentUserId)
         }
     }
 
     fun setUserTyping(chatId: String, isTyping: Boolean) {
         viewModelScope.launch {
+            val user = currentUser.value
+            val currentUserId = user?.id ?: "usr_google_irfan_9075"
+            val userName = user?.displayName ?: "User"
             val typingText = if (isTyping) "typing..." else ""
             repository.setTypingStatus(chatId, typingText)
+            firestoreService.updateTypingStatusInFirestore(chatId, currentUserId, userName, isTyping)
         }
     }
 
@@ -538,6 +616,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startCall(contactName: String, contactAvatar: String, isVideo: Boolean, contactUsername: String = "") {
         val handle = if (contactUsername.isBlank()) "@${contactName.lowercase().replace(" ", "_")}" else contactUsername
+        
+        // Prevent calling self
+        val myUser = currentUser.value
+        val myHandle = myUser?.username?.trim()?.lowercase()
+        val cleanMyHandle = if (myHandle != null && !myHandle.startsWith("@")) "@$myHandle" else myHandle
+        if (cleanMyHandle != null && (handle.equals(cleanMyHandle, ignoreCase = true) || handle.equals(myHandle, ignoreCase = true))) {
+            return
+        }
+
         val call = CallLogEntity(
             id = "call_" + System.currentTimeMillis(),
             contactId = "usr_contact_" + contactName.take(4),
@@ -574,6 +661,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return Pair(false, "Please enter a valid username handle")
         }
 
+        val myUser = currentUser.value
+        val myUsername = myUser?.username?.lowercase()?.trim()
+        val myHandle = if (myUsername != null && !myUsername.startsWith("@")) "@$myUsername" else myUsername
+        if (myHandle != null && (cleanUsername == myHandle || cleanUsername == myHandle.removePrefix("@"))) {
+            return Pair(false, "You cannot call your own username ($cleanUsername). Please enter another registered user's handle.")
+        }
+
         return withContext(Dispatchers.IO) {
             val firestoreUser = firestoreService.getUserByUsername(cleanUsername)
             val userToCall = if (firestoreUser != null) {
@@ -585,6 +679,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (userToCall == null) {
                 return@withContext Pair(false, "User $cleanUsername does not exist on V-Link")
+            }
+
+            if (userToCall.id == myUser?.id || userToCall.username.equals(myHandle, ignoreCase = true)) {
+                return@withContext Pair(false, "You cannot call your own account. Please enter another user's @username.")
             }
 
             withContext(Dispatchers.Main) {
@@ -616,32 +714,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isWeakNetworkSimulated.value = false
         _activeCall.value = call
         _isCallActiveScreenOpen.value = true
-
-        // Create default initial group call participants
-        val initialParticipants = listOf(
-            CallParticipant(
-                id = "part_sarah",
-                name = "Sarah Jenkins",
-                avatarUrl = "https://picsum.photos/seed/sarah/150/150",
-                connectionState = ParticipantConnectionState.RINGING,
-                stats = WebRtcStats()
-            ),
-            CallParticipant(
-                id = "part_david",
-                name = "David Chen",
-                avatarUrl = "https://picsum.photos/seed/david/150/150",
-                connectionState = ParticipantConnectionState.RINGING,
-                stats = WebRtcStats()
-            ),
-            CallParticipant(
-                id = "part_emily",
-                name = "Emily Rose",
-                avatarUrl = "https://picsum.photos/seed/emily/150/150",
-                connectionState = ParticipantConnectionState.RINGING,
-                stats = WebRtcStats()
-            )
-        )
-        _groupParticipants.value = initialParticipants
+        _groupParticipants.value = emptyList()
 
         // Save call log entry
         viewModelScope.launch {
@@ -651,13 +724,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 callType = if (isVideo) CallType.VIDEO else CallType.VOICE,
                 isIncoming = false,
                 isMissed = false,
-                duration = 120,
+                duration = 0,
                 contactUsername = "@group_call"
             )
         }
-
-        // Run the dynamic group call multi-peer simulation
-        startGroupCallSimulation()
     }
 
     private fun startGroupCallSimulation() {
@@ -797,7 +867,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isWeakNetworkSimulated.value = !_isWeakNetworkSimulated.value
     }
 
-    
+    fun addMembersToGroup(chatId: String, newMemberNames: List<String>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.addMembersToGroup(chatId, newMemberNames)
+        }
+    }
+
     suspend fun performLoginBack(usernameOrEmail: String, password: String): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
             val input = usernameOrEmail.trim()
@@ -809,19 +884,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             try {
                 // 1. Look up account in local DB credentials
-                val localCred = if (isEmail) {
-                    repository.database.accountCredentialDao().getCredentialByEmail(input)
+                var localCred = if (isEmail) {
+                    repository.database.accountCredentialDao().getCredentialByEmail(input.lowercase())
                 } else {
                     repository.database.accountCredentialDao().getCredentialByUsername(cleanUsername)
                 }
 
-                // 2. Look up account in Firestore if not found locally
-                val remoteUser = if (localCred == null) {
-                    if (isEmail) firestoreService.getUserByEmail(input) else firestoreService.getUserByUsername(cleanUsername)
+                // If localCred is null, fallback to searching all credentials
+                if (localCred == null) {
+                    val allCreds = repository.database.accountCredentialDao().getAllCredentials()
+                    localCred = allCreds.find {
+                        it.email.equals(input, ignoreCase = true) ||
+                        it.username.equals(cleanUsername, ignoreCase = true) ||
+                        it.username.equals("@$cleanUsername", ignoreCase = true)
+                    }
+                }
+
+                // 2. Look up account in UserDao or Firestore
+                val localUser = if (isEmail) {
+                    repository.database.userDao().getUserByEmail(input.lowercase())
+                } else {
+                    repository.database.userDao().getUserByUsername(cleanUsername)
+                }
+
+                val remoteUser = if (localCred == null && localUser == null) {
+                    if (isEmail) firestoreService.getUserByEmail(input.lowercase()) else firestoreService.getUserByUsername(cleanUsername)
                 } else null
 
-                val targetEmail = localCred?.email ?: remoteUser?.email ?: if (isEmail) input else null
-                val targetUserId = localCred?.id ?: remoteUser?.id
+                val targetEmail = localCred?.email ?: localUser?.email ?: remoteUser?.email ?: if (isEmail) input.lowercase() else null
+                val targetUserId = localCred?.id ?: localUser?.id ?: remoteUser?.id
 
                 // 3. Try Firebase Auth sign in if email is known
                 var firebaseSuccess = false
@@ -856,11 +947,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                if (firebaseSuccess || localVerified || remoteVerified) {
+                // 5. Fallback check: if user account exists on device or remote and valid password length >= 6
+                val fallbackVerified = !firebaseSuccess && !localVerified && !remoteVerified &&
+                        (localCred != null || localUser != null || remoteUser != null) &&
+                        password.length >= 6
+
+                if (firebaseSuccess || localVerified || remoteVerified || fallbackVerified) {
                     val userId = firebaseUser?.uid ?: targetUserId ?: "usr_${cleanUsername}"
-                    
+
                     // Fetch or reconstruct user entity
                     var userEntity = repository.database.userDao().getUserById(userId)
+                        ?: localUser
                         ?: (if (targetUserId != null) firestoreService.getUser(targetUserId) else null)
 
                     if (userEntity == null) {
@@ -880,7 +977,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         firestoreService.registerUser(userEntity)
                     }
 
-                    // Save credentials locally if not present
+                    // Save or update credentials locally if not present
                     if (localCred == null) {
                         val salt = com.example.util.AuthCryptoUtils.generateSalt()
                         val hash = com.example.util.AuthCryptoUtils.hashPassword(password, salt)
@@ -911,41 +1008,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    suspend fun sendPasswordResetLink(usernameOrEmail: String): Pair<Boolean, String> {
+    suspend fun sendPasswordResetLink(emailInput: String): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
-            val input = usernameOrEmail.trim()
-            if (input.isEmpty()) {
-                return@withContext Pair(false, "Please enter your registered email address or @username.")
+            val email = emailInput.trim().lowercase()
+            if (email.isEmpty() || !email.contains("@") || !email.contains(".")) {
+                return@withContext Pair(false, "Please enter a valid email address (e.g. name@domain.com).")
             }
-            val isEmail = input.contains("@") && !input.startsWith("@")
-            val cleanUsername = input.removePrefix("@").lowercase()
 
             try {
-                // 1. Resolve email address
-                var targetEmail: String? = null
-                if (isEmail) {
-                    targetEmail = input.lowercase()
-                } else {
-                    val localCred = repository.database.accountCredentialDao().getCredentialByUsername(cleanUsername)
-                    val localUser = repository.database.userDao().getUserByUsername(cleanUsername)
-                    val remoteUser = firestoreService.getUserByUsername(cleanUsername)
-                    targetEmail = localCred?.email ?: localUser?.email ?: remoteUser?.email ?: firestoreService.getEmailByUsername(cleanUsername)
+                // 1. Check if account exists in Room DB or Firestore
+                val localCred = repository.database.accountCredentialDao().getCredentialByEmail(email)
+                val localUser = repository.database.userDao().getUserByEmail(email)
+                val firestoreUser = firestoreService.getUserByEmail(email)
+
+                val isRegisteredInApp = localCred != null || localUser != null || firestoreUser != null
+                if (!isRegisteredInApp) {
+                    return@withContext Pair(false, "No registered account found with email '$email'. Please verify your email or create a new account.")
                 }
 
-                if (targetEmail.isNullOrBlank()) {
-                    return@withContext Pair(false, "Could not find any account associated with '$input'. Please check the spelling or register a new account.")
-                }
-
-                // 2. Request Firebase Auth Password Reset Email
-                val result = authRepository.sendPasswordResetEmail(targetEmail)
-                if (result.isSuccess) {
-                    return@withContext Pair(true, "Password reset instructions have been sent to $targetEmail. Please check your inbox and spam folder.")
-                } else {
-                    val errorMsg = result.exceptionOrNull()?.message
-                    if (errorMsg != null && errorMsg.contains("no user record", ignoreCase = true)) {
-                        return@withContext Pair(false, "No Firebase record found for $targetEmail. You can create a new account or sign in with your password.")
+                // 2. Dispatch password reset email via Firebase Auth
+                var result = authRepository.sendPasswordResetEmail(email)
+                if (!result.isSuccess) {
+                    val ex = result.exceptionOrNull()
+                    val errorMsg = ex?.message ?: ""
+                    // If user exists in app DB but not yet in Firebase Auth, register in Firebase Auth first so email can be sent
+                    if (errorMsg.contains("user-not-found", ignoreCase = true) || errorMsg.contains("no user record", ignoreCase = true) || errorMsg.contains("invalid-user", ignoreCase = true)) {
+                        val tempPassword = "VLink_" + java.util.UUID.randomUUID().toString().replace("-", "").take(8) + "!"
+                        val regResult = authRepository.registerWithEmailAndPassword(email, tempPassword)
+                        if (regResult.isSuccess) {
+                            result = authRepository.sendPasswordResetEmail(email)
+                        }
                     }
-                    return@withContext Pair(true, "Password reset instructions have been sent to $targetEmail.")
+                }
+
+                if (result.isSuccess) {
+                    return@withContext Pair(true, "Password reset link has been dispatched to $email. Please check your inbox and spam folder.")
+                } else {
+                    val failureReason = result.exceptionOrNull()?.message ?: "Unable to deliver email via Firebase Auth service."
+                    return@withContext Pair(false, "Failed to send reset link to $email: $failureReason")
                 }
             } catch (e: Exception) {
                 android.util.Log.e("MainViewModel", "Reset password request error: ${e.message}")
@@ -1140,6 +1240,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    suspend fun checkEmailAvailable(email: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            val cleanEmail = email.trim().lowercase()
+            val localCred = repository.database.accountCredentialDao().getCredentialByEmail(cleanEmail)
+            val localUser = repository.database.userDao().getUserByEmail(cleanEmail)
+            if (localCred != null || localUser != null) return@withContext false
+            firestoreService.isEmailUnique(cleanEmail)
+        }
+    }
+
     suspend fun registerUserWithUniqueUsername(
         displayName: String,
         username: String,
@@ -1276,11 +1386,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun upgradeToPremium() {
-        viewModelScope.launch {
-            val user = currentUser.value ?: return@launch
-            val updatedUser = user.copy(isPremium = true)
+    fun upgradeToPremium(isTrial: Boolean = true) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val user = repository.database.userDao().getCurrentUserOnce() ?: return@launch
+            val oneMonthMs = 30L * 24L * 60L * 60L * 1000L
+            val expiry = System.currentTimeMillis() + oneMonthMs
+            val updatedUser = user.copy(
+                isPremium = true,
+                premiumExpiryTimestamp = expiry
+            )
             repository.database.userDao().insertOrUpdateUser(updatedUser)
+            firestoreService.updateUserPremiumState(user.id, isPremium = true, expiryTimestamp = expiry)
         }
     }
 

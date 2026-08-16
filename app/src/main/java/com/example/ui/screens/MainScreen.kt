@@ -99,6 +99,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     NavigationTab.POSTS -> PostsScreen(viewModel = viewModel)
                     NavigationTab.CALLS -> CallsScreen(viewModel = viewModel)
                     NavigationTab.CHANNELS -> ChannelsScreen(viewModel = viewModel)
+                    NavigationTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
                 }
             }
         }

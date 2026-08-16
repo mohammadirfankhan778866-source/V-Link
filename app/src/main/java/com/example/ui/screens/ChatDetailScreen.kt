@@ -33,11 +33,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.models.*
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import com.example.ui.components.AttachmentOptionItem
 import com.example.ui.components.DeleteMessageConfirmationDialog
 import com.example.ui.components.EmojiPickerPopup
 import com.example.ui.components.MessageStatusTicks
 import com.example.ui.components.PulseAvatar
+import com.example.ui.components.SharedMediaGalleryBottomSheet
 import com.example.ui.components.TypingStatusDisplay
 import com.example.ui.components.VoiceNotePlayer
 import com.example.ui.theme.*
@@ -61,6 +64,7 @@ fun ChatDetailScreen(
 
     val replyingToMessage by viewModel.replyingToMessage.collectAsState()
     val showExactTimestamps by viewModel.showExactTimestamps.collectAsState()
+    val chatWallpaper by viewModel.chatWallpaper.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserId = currentUser?.id ?: "usr_google_irfan_9075"
 
@@ -77,7 +81,8 @@ fun ChatDetailScreen(
     var showMsgOptionsForMsg by remember { mutableStateOf<MessageEntity?>(null) }
     var msgToDelete by remember { mutableStateOf<MessageEntity?>(null) }
     var isRecordingVoiceNote by remember { mutableStateOf(false) }
-    var selectedWallpaper by remember { mutableStateOf("DEFAULT") }
+    var showChatInfoSheet by remember { mutableStateOf(false) }
+    var showMediaGallerySheet by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -144,11 +149,21 @@ fun ChatDetailScreen(
         }
     }
 
-    val wallpaperBackground = when (selectedWallpaper) {
-        "DARK" -> DarkBackground
-        "AMOLED" -> AmoledBackground
-        "EMERALD" -> Color(0xFF04201A)
-        else -> MaterialTheme.colorScheme.background
+    val wallpaperBrush: androidx.compose.ui.graphics.Brush? = when (chatWallpaper) {
+        "OCEAN" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)))
+        "SUNSET" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2D112C), Color(0xFF530031), Color(0xFF8D2039)))
+        "EMERALD" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF0A2E26), Color(0xFF145344), Color(0xFF1F7A65)))
+        "CYBER" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF180A29), Color(0xFF38004C), Color(0xFF003853)))
+        "WARM_CHARCOAL" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2C2421), Color(0xFF1C1715)))
+        "PASTEL" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2B2038), Color(0xFF473355), Color(0xFF3C2C47)))
+        "AMOLED" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF000000), Color(0xFF000000)))
+        else -> null
+    }
+
+    val wallpaperModifier = if (wallpaperBrush != null) {
+        Modifier.background(wallpaperBrush)
+    } else {
+        Modifier.background(MaterialTheme.colorScheme.background)
     }
 
     Scaffold(
@@ -208,7 +223,11 @@ fun ChatDetailScreen(
                     title = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(vertical = 4.dp)
+                            modifier = Modifier
+                                .padding(vertical = 4.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { showChatInfoSheet = true }
+                                .testTag("chat_header_top_bar")
                         ) {
                             PulseAvatar(
                                 imageUrl = chat?.avatarUrl ?: "",
@@ -353,6 +372,12 @@ fun ChatDetailScreen(
                             )
                         }
 
+                        IconButton(
+                            onClick = { showMediaGallerySheet = true },
+                            modifier = Modifier.testTag("open_shared_media_gallery_button")
+                        ) {
+                            Icon(Icons.Default.PermMedia, contentDescription = "Shared Media Gallery")
+                        }
                         IconButton(onClick = { showCallDialog = true }) {
                             Icon(Icons.Default.Call, contentDescription = "Voice Call")
                         }
@@ -363,10 +388,18 @@ fun ChatDetailScreen(
                             }
                             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                                 DropdownMenuItem(
+                                    text = { Text("Shared Media Gallery") },
+                                    onClick = {
+                                        menuOpen = false
+                                        showMediaGallerySheet = true
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.PermMedia, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Wallpapers") },
                                     onClick = {
                                         menuOpen = false
-                                        selectedWallpaper = if (selectedWallpaper == "DEFAULT") "EMERALD" else "DEFAULT"
+                                        viewModel.setChatWallpaper(if (chatWallpaper == "DEFAULT") "EMERALD" else "DEFAULT")
                                     },
                                     leadingIcon = { Icon(Icons.Outlined.Wallpaper, contentDescription = null) }
                                 )
@@ -409,7 +442,7 @@ fun ChatDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(wallpaperBackground)
+                .then(wallpaperModifier)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // Search Results Info Banner
@@ -810,15 +843,48 @@ fun ChatDetailScreen(
                                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.White)
                             }
                         } else {
-                            IconButton(
-                                onClick = {
-                                    isRecordingVoiceNote = true
-                                },
+                            var recordStartTime by remember { mutableLongStateOf(0L) }
+                            Box(
                                 modifier = Modifier
                                     .size(44.dp)
-                                    .background(VoiceMicAccent, CircleShape)
+                                    .clip(CircleShape)
+                                    .background(VoiceMicAccent)
+                                    .testTag("voice_recording_button")
+                                    .pointerInput(Unit) {
+                                        detectTapGestures(
+                                            onPress = {
+                                                recordStartTime = System.currentTimeMillis()
+                                                isRecordingVoiceNote = true
+                                                val released = tryAwaitRelease()
+                                                val elapsedMs = System.currentTimeMillis() - recordStartTime
+                                                if (released && isRecordingVoiceNote) {
+                                                    if (elapsedMs >= 800L) {
+                                                        // Automatically send voice message on press release
+                                                        val durationSec = maxOf(1, (elapsedMs / 1000).toInt())
+                                                        val durationStr = String.format(Locale.getDefault(), "%02d:%02d", durationSec / 60, durationSec % 60)
+                                                        viewModel.sendMessage(
+                                                            chatId = chatId,
+                                                            content = "Voice note ($durationStr)",
+                                                            type = MessageType.VOICE_NOTE,
+                                                            mediaUrl = "audio_sample.mp3"
+                                                        )
+                                                    }
+                                                    isRecordingVoiceNote = false
+                                                }
+                                            },
+                                            onTap = {
+                                                isRecordingVoiceNote = !isRecordingVoiceNote
+                                            }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.Mic, contentDescription = "Voice Note", tint = Color.White)
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = "Press and hold to record voice note",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
                             }
                         }
                     }
@@ -1210,6 +1276,455 @@ fun ChatDetailScreen(
                         }
                     }
                 )
+            }
+
+            // SHARED MEDIA GALLERY SHEET
+            if (showMediaGallerySheet) {
+                SharedMediaGalleryBottomSheet(
+                    messages = messages,
+                    onDismiss = { showMediaGallerySheet = false }
+                )
+            }
+
+            // GROUP / CONTACT INFO SHEET (WhatsApp-style Header Detail View)
+            if (showChatInfoSheet && chat != null) {
+                var showAddMemberDialog by remember { mutableStateOf(false) }
+                val allContacts by viewModel.repository.allContacts.collectAsState(initial = emptyList())
+
+                ModalBottomSheet(
+                    onDismissRequest = { showChatInfoSheet = false },
+                    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                    modifier = Modifier.testTag("chat_info_bottom_sheet")
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 32.dp)
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // Header Avatar, Title, Handle
+                        Spacer(modifier = Modifier.height(8.dp))
+                        PulseAvatar(
+                            imageUrl = chat?.avatarUrl ?: "",
+                            name = chat?.title ?: "Chat",
+                            size = 80.dp,
+                            isOnline = chat?.isGroup == false
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = chat?.title ?: "Chat",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (chat?.isPremium == true) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    Icons.Default.Star,
+                                    contentDescription = "VIP Premium",
+                                    tint = Color(0xFFFFC107),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        val handleText = if (!chat?.username.isNullOrEmpty()) {
+                            if (chat?.username!!.startsWith("@")) chat?.username!! else "@${chat?.username}"
+                        } else if (chat?.isGroup == false && chat?.title != null) {
+                            "@${chat?.title!!.lowercase().replace(" ", "_")}"
+                        } else "Group ID: ${chat?.id}"
+
+                        Text(
+                            text = handleText,
+                            fontSize = 13.sp,
+                            color = VLinkCyan,
+                            fontWeight = FontWeight.Medium
+                        )
+
+                        if (chat?.isGroup == true) {
+                            Text(
+                                text = "Group • ${chat?.memberCount} members",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                text = if (chat?.isOnline == true) "Online" else "Offline",
+                                fontSize = 12.sp,
+                                color = if (chat?.isOnline == true) PulseGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Action Buttons: Call, Video Call, Search
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            Surface(
+                                onClick = {
+                                    showChatInfoSheet = false
+                                    viewModel.startCall(chat?.title ?: "", chat?.avatarUrl ?: "", false, chat?.username ?: "")
+                                },
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(4.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(Icons.Default.Call, contentDescription = null, tint = VLinkCyan)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("Audio", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+
+                            Surface(
+                                onClick = {
+                                    showChatInfoSheet = false
+                                    viewModel.startCall(chat?.title ?: "", chat?.avatarUrl ?: "", true, chat?.username ?: "")
+                                },
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(4.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(Icons.Default.Videocam, contentDescription = null, tint = VLinkViolet)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("Video", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+
+                            Surface(
+                                onClick = {
+                                    showChatInfoSheet = false
+                                    isSearchingMessages = true
+                                },
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(4.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(Icons.Default.Search, contentDescription = null, tint = PulseGreen)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("Search", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 24.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // GROUP DETAILS & MEMBER MANAGEMENT
+                        if (chat?.isGroup == true) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${chat?.memberCount} Group Members",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+
+                                    Button(
+                                        onClick = { showAddMemberDialog = true },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = VLinkCyan,
+                                            contentColor = Color.Black
+                                        ),
+                                        shape = RoundedCornerShape(20.dp),
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                        modifier = Modifier.testTag("add_member_button")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.PersonAdd,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Add Member", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                    ),
+                                    shape = RoundedCornerShape(20.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        // Current user row (Admin)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            PulseAvatar(
+                                                imageUrl = currentUser?.profilePictureUrl ?: "https://picsum.photos/seed/irfan/300/300",
+                                                name = currentUser?.displayName ?: "You",
+                                                size = 40.dp
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(text = "You", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Surface(
+                                                        color = VLinkViolet.copy(alpha = 0.2f),
+                                                        shape = RoundedCornerShape(6.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "Group Admin",
+                                                            fontSize = 10.sp,
+                                                            color = VLinkViolet,
+                                                            fontWeight = FontWeight.Bold,
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    text = currentUser?.username ?: "@you",
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f))
+
+                                        // Contacts list
+                                        allContacts.take(5).forEach { member ->
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                PulseAvatar(
+                                                    imageUrl = member.profilePictureUrl,
+                                                    name = member.displayName,
+                                                    size = 40.dp
+                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = member.displayName,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        fontSize = 14.sp
+                                                    )
+                                                    Text(
+                                                        text = member.username.ifEmpty { "@${member.displayName.lowercase().replace(" ", "_")}" },
+                                                        fontSize = 12.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Text(
+                                                    text = "Member",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // INDIVIDUAL CONTACT DETAILS
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                    ),
+                                    shape = RoundedCornerShape(20.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text("About & Phone Number", fontSize = 12.sp, color = VLinkCyan, fontWeight = FontWeight.Bold)
+                                        Text(text = "Connecting via V-Link ⚡", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                        Text(text = handleText, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ADD MEMBER DIALOG
+                if (showAddMemberDialog) {
+                    var selectedMembers by remember { mutableStateOf(setOf<String>()) }
+                    var memberSearchQuery by remember { mutableStateOf("") }
+
+                    AlertDialog(
+                        onDismissRequest = { showAddMemberDialog = false },
+                        title = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.PersonAdd, contentDescription = null, tint = VLinkCyan)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Add Members to Group", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            }
+                        },
+                        text = {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Text("Select contacts or enter handle to add to ${chat?.title}:", fontSize = 13.sp)
+
+                                OutlinedTextField(
+                                    value = memberSearchQuery,
+                                    onValueChange = { memberSearchQuery = it },
+                                    placeholder = { Text("Search by name or @username...") },
+                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth().testTag("add_member_search_input")
+                                )
+
+                                val filteredContacts = remember(allContacts, memberSearchQuery) {
+                                    if (memberSearchQuery.isBlank()) allContacts
+                                    else allContacts.filter {
+                                        it.displayName.contains(memberSearchQuery, ignoreCase = true) ||
+                                        it.username.contains(memberSearchQuery, ignoreCase = true)
+                                    }
+                                }
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 240.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (filteredContacts.isEmpty() && memberSearchQuery.isNotBlank()) {
+                                        val customHandle = if (memberSearchQuery.startsWith("@")) memberSearchQuery else "@$memberSearchQuery"
+                                        Surface(
+                                            onClick = {
+                                                selectedMembers = if (selectedMembers.contains(customHandle)) {
+                                                    selectedMembers - customHandle
+                                                } else {
+                                                    selectedMembers + customHandle
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = if (selectedMembers.contains(customHandle)) VLinkCyan.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(12.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("Add \"$customHandle\"", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                Checkbox(
+                                                    checked = selectedMembers.contains(customHandle),
+                                                    onCheckedChange = null
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        filteredContacts.forEach { contact ->
+                                            val isSelected = selectedMembers.contains(contact.displayName)
+                                            Surface(
+                                                onClick = {
+                                                    selectedMembers = if (isSelected) {
+                                                        selectedMembers - contact.displayName
+                                                    } else {
+                                                        selectedMembers + contact.displayName
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = if (isSelected) VLinkCyan.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                ) {
+                                                    PulseAvatar(imageUrl = contact.profilePictureUrl, name = contact.displayName, size = 36.dp)
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(contact.displayName, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                                        Text(
+                                                            contact.username.ifEmpty { "@${contact.displayName.lowercase().replace(" ", "_")}" },
+                                                            fontSize = 11.sp,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                    Checkbox(
+                                                        checked = isSelected,
+                                                        onCheckedChange = null
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    if (selectedMembers.isNotEmpty()) {
+                                        viewModel.addMembersToGroup(chat?.id ?: chatId, selectedMembers.toList())
+                                    }
+                                    showAddMemberDialog = false
+                                },
+                                enabled = selectedMembers.isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black),
+                                modifier = Modifier.testTag("confirm_add_members_btn")
+                            ) {
+                                Text("Add (${selectedMembers.size}) Members", fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showAddMemberDialog = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
+                }
             }
         }
     }

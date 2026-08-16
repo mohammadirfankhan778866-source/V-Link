@@ -39,7 +39,8 @@ data class UserEntity(
     val channelAlias: String = "",
     val statusPrivacyMode: String = "PUBLIC",
     val statusPrivacyList: String = "",
-    val isPremium: Boolean = false
+    val isPremium: Boolean = false,
+    val premiumExpiryTimestamp: Long = 0L
 )
 
 @Entity(tableName = "chats")

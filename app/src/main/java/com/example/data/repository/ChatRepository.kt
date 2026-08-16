@@ -289,6 +289,26 @@ class ChatRepository(
         return chatId
     }
 
+    suspend fun addMembersToGroup(chatId: String, newMemberNames: List<String>): Int {
+        val chat = database.chatDao().getChatByIdOnce(chatId) ?: return 0
+        val updatedMemberCount = chat.memberCount + newMemberNames.size
+        database.chatDao().insertOrUpdateChat(chat.copy(memberCount = updatedMemberCount))
+
+        val namesStr = newMemberNames.joinToString(", ")
+        val sysMessage = MessageEntity(
+            id = "msg_sys_" + UUID.randomUUID().toString().take(6),
+            chatId = chatId,
+            senderId = "system",
+            senderName = "System",
+            content = "You added $namesStr to the group",
+            timestamp = System.currentTimeMillis(),
+            status = MessageStatus.READ.name,
+            type = MessageType.TEXT.name
+        )
+        database.messageDao().insertMessage(sysMessage)
+        return updatedMemberCount
+    }
+
     suspend fun postStatusStory(mediaUrl: String, caption: String) {
         val status = StatusStoryEntity(
             id = "status_" + UUID.randomUUID().toString().take(6),

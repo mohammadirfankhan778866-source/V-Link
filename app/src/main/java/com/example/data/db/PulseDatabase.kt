@@ -290,7 +290,7 @@ interface PostDao {
         PostEntity::class,
         AccountCredentialEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class PulseDatabase : RoomDatabase() {
@@ -361,6 +361,12 @@ abstract class PulseDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE users ADD COLUMN premiumExpiryTimestamp INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): PulseDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -368,8 +374,8 @@ abstract class PulseDatabase : RoomDatabase() {
                     PulseDatabase::class.java,
                     "pulse_chat_database"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
-                    .fallbackToDestructiveMigration()
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                    .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                 INSTANCE = instance
                 instance
