@@ -42,7 +42,6 @@ fun ChatsScreen(
     val chats by viewModel.chats.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedFilter by viewModel.selectedFilter.collectAsState()
-    var isSearchActive by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     var selectedChatForContextMenu by remember { mutableStateOf<ChatEntity?>(null) }
 
@@ -53,42 +52,39 @@ fun ChatsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    if (isSearchActive) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { viewModel.setSearchQuery(it) },
-                            placeholder = { Text("Search chats or messages...", fontSize = 14.sp) },
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("chat_search_input"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = PulseGreen,
-                                unfocusedBorderColor = Color.Transparent
-                            )
-                        )
-                    } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "V-Link",
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             fontSize = 22.sp
                         )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = PulseGreen.copy(alpha = 0.15f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "E2EE",
+                                    tint = PulseGreen,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text(
+                                    text = "E2EE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PulseGreen
+                                )
+                            }
+                        }
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = {
-                            isSearchActive = !isSearchActive
-                            if (!isSearchActive) viewModel.setSearchQuery("")
-                        },
-                        modifier = Modifier.testTag("search_icon_button")
-                    ) {
-                        Icon(
-                            imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
-                            contentDescription = "Search"
-                        )
-                    }
-
                     IconButton(
                         onClick = { onOpenNewChatModal() },
                         modifier = Modifier.testTag("camera_icon_button")
@@ -116,7 +112,6 @@ fun ChatsScreen(
                                 text = { Text("Starred Messages") },
                                 onClick = {
                                     menuExpanded = false
-                                    // Filter starred
                                     viewModel.setFilter("All")
                                 },
                                 leadingIcon = { Icon(Icons.Outlined.Star, contentDescription = null) }
@@ -162,6 +157,86 @@ fun ChatsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // Prominent Top Search Bar for filtering active conversations by contact name or message content
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = if (searchQuery.isNotEmpty()) PulseGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { viewModel.setSearchQuery(it) },
+                        placeholder = {
+                            Text(
+                                text = "Search contacts, @handles, or messages...",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("chat_search_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent
+                        )
+                    )
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { viewModel.setSearchQuery("") },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (searchQuery.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "${chats.size} ${if (chats.size == 1) "conversation" else "conversations"} found",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = PulseGreen
+                    )
+                    Text(
+                        text = "Filtered by name & content",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             FilterChipGroup(
                 selectedFilter = selectedFilter,
                 onFilterSelected = { viewModel.setFilter(it) }
@@ -176,19 +251,19 @@ fun ChatsScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            imageVector = Icons.Outlined.Chat,
+                            imageVector = if (searchQuery.isNotEmpty()) Icons.Outlined.SearchOff else Icons.Outlined.Chat,
                             contentDescription = null,
                             modifier = Modifier.size(64.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "No chats found",
+                            text = if (searchQuery.isNotEmpty()) "No matching conversations" else "No chats found",
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "Tap the + message button to start a new conversation",
+                            text = if (searchQuery.isNotEmpty()) "Try searching with a different name or keyword" else "Tap the + message button to start a new conversation",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
@@ -270,6 +345,25 @@ fun ChatsScreen(
                             leadingContent = { Icon(Icons.Default.Archive, contentDescription = null) },
                             modifier = Modifier.clickable {
                                 viewModel.toggleArchiveChat(chat.id, !chat.isArchived)
+                                selectedChatForContextMenu = null
+                            }
+                        )
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    text = if (chat.isBlocked) "Unblock Contact" else "Block Contact",
+                                    color = if (chat.isBlocked) MaterialTheme.colorScheme.primary else Color.Red
+                                )
+                            },
+                            leadingContent = {
+                                Icon(
+                                    imageVector = if (chat.isBlocked) Icons.Outlined.CheckCircle else Icons.Outlined.Block,
+                                    contentDescription = null,
+                                    tint = if (chat.isBlocked) MaterialTheme.colorScheme.primary else Color.Red
+                                )
+                            },
+                            modifier = Modifier.clickable {
+                                viewModel.toggleBlockUser(chat.id, !chat.isBlocked)
                                 selectedChatForContextMenu = null
                             }
                         )
@@ -370,23 +464,70 @@ fun ChatItemRow(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (chat.typingStatus.isNotEmpty()) {
-                    Text(
-                        text = chat.typingStatus,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = PulseGreen,
-                        maxLines = 1
-                    )
-                } else {
-                    Text(
-                        text = chat.lastMessageText,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                if (chat.isBlocked) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color.Red.copy(alpha = 0.12f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Block,
+                                contentDescription = "Blocked",
+                                tint = Color.Red,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Blocked Contact",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.Red
+                            )
+                        }
+                    }
+                } else if (chat.typingStatus.isNotEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.weight(1f)
-                    )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Edit,
+                            contentDescription = "Typing",
+                            tint = PulseGreen,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = chat.typingStatus,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PulseGreen,
+                            maxLines = 1
+                        )
+                    }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Encrypted",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = chat.lastMessageText.ifEmpty { "End-to-end encrypted message" },
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
                 Row(

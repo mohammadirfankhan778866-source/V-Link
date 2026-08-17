@@ -76,16 +76,36 @@ fun PulseAvatar(
             val infiniteTransition = rememberInfiniteTransition(label = "avatar_pulse")
             val pulseScale by infiniteTransition.animateFloat(
                 initialValue = 1f,
-                targetValue = 1.15f,
+                targetValue = 1.25f,
                 animationSpec = infiniteRepeatable(
                     animation = tween(1200, easing = FastOutSlowInEasing),
                     repeatMode = RepeatMode.Reverse
                 ),
                 label = "scale"
             )
+            val auraAlpha by infiniteTransition.animateFloat(
+                initialValue = 0.5f,
+                targetValue = 0.0f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1200, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Restart
+                ),
+                label = "auraAlpha"
+            )
+
+            // Outer breathing aura ring
             Box(
                 modifier = Modifier
-                    .size(size * 0.28f * pulseScale)
+                    .size(size * 0.38f * pulseScale)
+                    .clip(CircleShape)
+                    .background(OnlineGreen.copy(alpha = auraAlpha))
+                    .align(Alignment.BottomEnd)
+            )
+
+            // Inner solid status dot
+            Box(
+                modifier = Modifier
+                    .size(size * 0.28f)
                     .clip(CircleShape)
                     .background(OnlineGreen)
                     .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
@@ -192,6 +212,17 @@ fun VoiceNotePlayer(
     isPlaying: Boolean,
     onTogglePlay: () -> Unit
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "audio_waveform")
+    val wavePhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = if (isPlaying) (Math.PI.toFloat() * 2f) else 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "phase"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -214,18 +245,22 @@ fun VoiceNotePlayer(
             )
         }
 
-        // Waveform Canvas
+        // Live Animated Waveform Canvas
         Canvas(
             modifier = Modifier
                 .weight(1f)
-                .height(24.dp)
+                .height(26.dp)
         ) {
-            val bars = 24
+            val bars = 26
             val barWidth = size.width / (bars * 1.5f)
-            val heights = listOf(0.3f, 0.6f, 0.9f, 0.4f, 0.8f, 0.5f, 0.2f, 0.7f, 1.0f, 0.6f, 0.3f, 0.8f, 0.5f, 0.9f, 0.4f, 0.7f, 0.3f, 0.6f, 0.8f, 0.4f, 0.2f, 0.5f, 0.7f, 0.3f)
+            val baseHeights = listOf(0.3f, 0.6f, 0.9f, 0.4f, 0.8f, 0.5f, 0.2f, 0.7f, 1.0f, 0.6f, 0.3f, 0.8f, 0.5f, 0.9f, 0.4f, 0.7f, 0.3f, 0.6f, 0.8f, 0.4f, 0.2f, 0.5f, 0.7f, 0.3f, 0.6f, 0.4f)
             for (i in 0 until bars) {
                 val x = i * (barWidth * 1.5f)
-                val h = size.height * (heights[i % heights.size])
+                val base = baseHeights[i % baseHeights.size]
+                val dynamicMultiplier = if (isPlaying) {
+                    0.6f + 0.4f * kotlin.math.sin(wavePhase + i * 0.4f).toFloat()
+                } else 1.0f
+                val h = (size.height * base * dynamicMultiplier).coerceIn(4f, size.height)
                 val y = (size.height - h) / 2
                 val color = if (i < (bars * if (isPlaying) 0.6f else 0.2f)) VoiceMicAccent else Color.Gray.copy(alpha = 0.5f)
                 drawRoundRect(
@@ -246,7 +281,7 @@ fun VoiceNotePlayer(
 }
 
 /**
- * Animated Typing status display component that renders bouncing dots and a typing label.
+ * Animated Typing status display component that renders bouncing dots in a smooth sine wave and a typing label.
  */
 @Composable
 fun TypingStatusDisplay(
@@ -256,29 +291,30 @@ fun TypingStatusDisplay(
     avatarUrl: String = ""
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "typing_dots")
-    val dot1Alpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
+    
+    val dot1Offset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -5f,
         animationSpec = infiniteRepeatable(
-            animation = tween(600, delayMillis = 0, easing = LinearEasing),
+            animation = tween(400, delayMillis = 0, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "dot1"
     )
-    val dot2Alpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
+    val dot2Offset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -5f,
         animationSpec = infiniteRepeatable(
-            animation = tween(600, delayMillis = 200, easing = LinearEasing),
+            animation = tween(400, delayMillis = 150, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "dot2"
     )
-    val dot3Alpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
+    val dot3Offset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -5f,
         animationSpec = infiniteRepeatable(
-            animation = tween(600, delayMillis = 400, easing = LinearEasing),
+            animation = tween(400, delayMillis = 300, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "dot3"
@@ -311,29 +347,135 @@ fun TypingStatusDisplay(
                 fontWeight = FontWeight.Medium
             )
             Row(
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.height(14.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(5.dp)
+                        .size(6.dp)
+                        .offset(y = dot1Offset.dp)
                         .clip(CircleShape)
-                        .background(PulseGreen.copy(alpha = dot1Alpha))
+                        .background(PulseGreen)
                 )
                 Box(
                     modifier = Modifier
-                        .size(5.dp)
+                        .size(6.dp)
+                        .offset(y = dot2Offset.dp)
                         .clip(CircleShape)
-                        .background(PulseGreen.copy(alpha = dot2Alpha))
+                        .background(PulseGreen)
                 )
                 Box(
                     modifier = Modifier
-                        .size(5.dp)
+                        .size(6.dp)
+                        .offset(y = dot3Offset.dp)
                         .clip(CircleShape)
-                        .background(PulseGreen.copy(alpha = dot3Alpha))
+                        .background(PulseGreen)
                 )
             }
         }
+    }
+}
+
+/**
+ * Live animated soundwave equalizer bars rendered during active voice note recording.
+ */
+@Composable
+fun LiveRecordingSoundWave(
+    modifier: Modifier = Modifier,
+    barColor: Color = Color(0xFFE53935)
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "recording_bars")
+    val phase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (Math.PI * 2).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "phase"
+    )
+
+    Canvas(modifier = modifier.height(20.dp)) {
+        val bars = 18
+        val spacing = 4.dp.toPx()
+        val barWidth = (size.width - (bars - 1) * spacing) / bars
+        for (i in 0 until bars) {
+            val sinVal = kotlin.math.abs(kotlin.math.sin(phase + i * 0.45f)).toFloat()
+            val barHeight = ((size.height * 0.25f) + (size.height * 0.75f * sinVal)).coerceIn(4f, size.height)
+            val x = i * (barWidth + spacing)
+            val y = (size.height - barHeight) / 2
+            drawRoundRect(
+                color = barColor,
+                topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                size = androidx.compose.ui.geometry.Size(barWidth, barHeight),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f)
+            )
+        }
+    }
+}
+
+/**
+ * Sonar pulse ripple rings radiating around active call avatars or active recording buttons.
+ */
+@Composable
+fun SonarPulseRipple(
+    targetSize: Dp = 100.dp,
+    rippleColor: Color = VLinkCyan,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "sonar_ripple")
+    val ring1Scale by infiniteTransition.animateFloat(
+        initialValue = 0.9f,
+        targetValue = 1.6f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, delayMillis = 0, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "ring1Scale"
+    )
+    val ring1Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.6f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, delayMillis = 0, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "ring1Alpha"
+    )
+
+    val ring2Scale by infiniteTransition.animateFloat(
+        initialValue = 0.9f,
+        targetValue = 1.6f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, delayMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "ring2Scale"
+    )
+    val ring2Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.6f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, delayMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "ring2Alpha"
+    )
+
+    Box(modifier = modifier.size(targetSize), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .size(targetSize * ring1Scale)
+                .clip(CircleShape)
+                .background(rippleColor.copy(alpha = ring1Alpha))
+        )
+        Box(
+            modifier = Modifier
+                .size(targetSize * ring2Scale)
+                .clip(CircleShape)
+                .background(rippleColor.copy(alpha = ring2Alpha))
+        )
     }
 }
 

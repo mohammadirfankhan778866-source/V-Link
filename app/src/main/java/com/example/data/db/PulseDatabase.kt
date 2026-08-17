@@ -73,6 +73,9 @@ interface ChatDao {
     @Query("SELECT * FROM chats ORDER BY isPinned DESC, lastMessageTimestamp DESC")
     fun getAllChats(): Flow<List<ChatEntity>>
 
+    @Query("SELECT * FROM chats ORDER BY isPinned DESC, lastMessageTimestamp DESC")
+    suspend fun getAllChatsOnce(): List<ChatEntity>
+
     @Query("SELECT * FROM chats WHERE id = :chatId")
     fun getChatById(chatId: String): Flow<ChatEntity?>
 

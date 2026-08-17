@@ -26,8 +26,17 @@ class PulseWebSocketService(private val database: PulseDatabase) {
 
     fun sendMessage(chatId: String, content: String, type: MessageType = MessageType.TEXT, mediaUrl: String = "", replyToId: String? = null, replyToName: String? = null, replyToContent: String? = null) {
         scope.launch {
+            val existingChat = database.chatDao().getChatByIdOnce(chatId)
+            if (existingChat?.isBlocked == true) {
+                // Prevent sending to blocked contact
+                return@launch
+            }
+
             val msgId = "msg_" + UUID.randomUUID().toString().take(8)
             val currentTime = System.currentTimeMillis()
+
+            // Apply End-to-End Encryption
+            val encryptedContent = com.example.util.E2EEncryptionManager.encrypt(content, chatId)
 
             val message = MessageEntity(
                 id = msgId,
@@ -35,7 +44,7 @@ class PulseWebSocketService(private val database: PulseDatabase) {
                 senderId = "usr_google_irfan_9075",
                 senderName = "Mohammad Irfan Khan",
                 senderAvatar = "https://picsum.photos/seed/irfan/300/300",
-                content = content,
+                content = encryptedContent,
                 timestamp = currentTime,
                 status = MessageStatus.SENT.name,
                 type = type.name,
@@ -48,7 +57,6 @@ class PulseWebSocketService(private val database: PulseDatabase) {
             database.messageDao().insertMessage(message)
 
             // Update or create chat last message
-            val existingChat = database.chatDao().getChatByIdOnce(chatId)
             val displayTitle = existingChat?.title ?: "Chat"
             val updatedChat = (existingChat ?: ChatEntity(
                 id = chatId,
@@ -70,20 +78,30 @@ class PulseWebSocketService(private val database: PulseDatabase) {
 
     private fun simulateServerEchoAndReply(chatId: String, userText: String, type: MessageType, userMsgId: String) {
         scope.launch {
+            val currentChat = database.chatDao().getChatByIdOnce(chatId)
+            if (currentChat?.isBlocked == true) {
+                // Blocked contacts cannot reply or send messages
+                return@launch
+            }
+
             delay(400)
             database.messageDao().updateMessageStatus(userMsgId, MessageStatus.DELIVERED.name)
             delay(400)
             database.messageDao().updateMessageStatus(userMsgId, MessageStatus.READ.name)
 
-            val currentChat = database.chatDao().getChatByIdOnce(chatId)
             val contactName = currentChat?.title ?: "Contact"
 
-            // Typing indicator from contact
+            // Live Typing indicator from contact
             database.chatDao().updateTypingStatus(chatId, "$contactName is typing...")
 
-            delay(1200)
+            delay(1800)
             // Clear typing
             database.chatDao().updateTypingStatus(chatId, "")
+
+            // Re-check blocking status after delay
+            if (database.chatDao().getChatByIdOnce(chatId)?.isBlocked == true) {
+                return@launch
+            }
 
             // Generate realistic response based on chat
             val responseText = when {
@@ -96,7 +114,7 @@ class PulseWebSocketService(private val database: PulseDatabase) {
                 currentChat?.isGroup == true ->
                     "Got it! Thanks for updating the group."
                 else ->
-                    "Received! Processing message via Pulse gateway. ⚡"
+                    "Received! Protected with end-to-end encryption. 🔒⚡"
             }
 
             val replyMsgId = "msg_reply_" + UUID.randomUUID().toString().take(8)
@@ -108,7 +126,7 @@ class PulseWebSocketService(private val database: PulseDatabase) {
                 senderId = "usr_contact_" + chatId,
                 senderName = contactName,
                 senderAvatar = currentChat?.avatarUrl ?: "https://picsum.photos/seed/$chatId/300/300",
-                content = responseText,
+                content = com.example.util.E2EEncryptionManager.encrypt(responseText, chatId),
                 timestamp = replyTime,
                 status = MessageStatus.READ.name,
                 type = MessageType.TEXT.name
@@ -137,17 +155,26 @@ class PulseWebSocketService(private val database: PulseDatabase) {
     }
 
     fun triggerIncomingCallSimulation(contactName: String, contactAvatar: String, isVideo: Boolean) {
-        val call = CallLogEntity(
-            id = "call_" + UUID.randomUUID().toString().take(6),
-            contactId = "usr_contact_" + contactName.lowercase().take(4),
-            contactName = contactName,
-            contactAvatar = contactAvatar.ifEmpty { "https://picsum.photos/seed/$contactName/300/300" },
-            callType = if (isVideo) CallType.VIDEO.name else CallType.VOICE.name,
-            isIncoming = true,
-            isMissed = false,
-            timestamp = System.currentTimeMillis(),
-            durationSeconds = 0
-        )
-        _incomingCallSignal.value = call
+        scope.launch {
+            val chats = database.chatDao().getAllChatsOnce()
+            val isCallerBlocked = chats.any { (it.title.equals(contactName, ignoreCase = true) || it.id.contains(contactName.lowercase())) && it.isBlocked }
+            if (isCallerBlocked) {
+                // Blocked contact call is dropped
+                return@launch
+            }
+
+            val call = CallLogEntity(
+                id = "call_" + UUID.randomUUID().toString().take(6),
+                contactId = "usr_contact_" + contactName.lowercase().take(4),
+                contactName = contactName,
+                contactAvatar = contactAvatar.ifEmpty { "https://picsum.photos/seed/$contactName/300/300" },
+                callType = if (isVideo) CallType.VIDEO.name else CallType.VOICE.name,
+                isIncoming = true,
+                isMissed = false,
+                timestamp = System.currentTimeMillis(),
+                durationSeconds = 0
+            )
+            _incomingCallSignal.value = call
+        }
     }
 }

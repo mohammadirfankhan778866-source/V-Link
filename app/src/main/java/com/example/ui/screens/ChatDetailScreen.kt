@@ -3,6 +3,8 @@ package com.example.ui.screens
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,7 +22,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
@@ -29,18 +36,19 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.models.*
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.ui.input.pointer.pointerInput
 import com.example.ui.components.AttachmentOptionItem
 import com.example.ui.components.DeleteMessageConfirmationDialog
 import com.example.ui.components.EmojiPickerPopup
+import com.example.ui.components.LiveRecordingSoundWave
 import com.example.ui.components.MessageStatusTicks
 import com.example.ui.components.PulseAvatar
 import com.example.ui.components.SharedMediaGalleryBottomSheet
+import com.example.ui.components.SonarPulseRipple
 import com.example.ui.components.TypingStatusDisplay
 import com.example.ui.components.VoiceNotePlayer
 import com.example.ui.theme.*
@@ -48,6 +56,7 @@ import com.example.ui.viewmodels.MainViewModel
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -149,13 +158,44 @@ fun ChatDetailScreen(
         }
     }
 
+    val gradientShiftTransition = rememberInfiniteTransition(label = "gradient_shift")
+    val gradientShiftOffset by gradientShiftTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 600f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(8000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "gradientShift"
+    )
+
     val wallpaperBrush: androidx.compose.ui.graphics.Brush? = when (chatWallpaper) {
-        "OCEAN" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)))
-        "SUNSET" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2D112C), Color(0xFF530031), Color(0xFF8D2039)))
-        "EMERALD" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF0A2E26), Color(0xFF145344), Color(0xFF1F7A65)))
-        "CYBER" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF180A29), Color(0xFF38004C), Color(0xFF003853)))
+        "OCEAN" -> androidx.compose.ui.graphics.Brush.linearGradient(
+            colors = listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)),
+            start = Offset(gradientShiftOffset, 0f),
+            end = Offset(1000f - gradientShiftOffset, 1400f)
+        )
+        "SUNSET" -> androidx.compose.ui.graphics.Brush.linearGradient(
+            colors = listOf(Color(0xFF2D112C), Color(0xFF530031), Color(0xFF8D2039)),
+            start = Offset(0f, gradientShiftOffset),
+            end = Offset(1000f, 1400f - gradientShiftOffset)
+        )
+        "EMERALD" -> androidx.compose.ui.graphics.Brush.linearGradient(
+            colors = listOf(Color(0xFF0A2E26), Color(0xFF145344), Color(0xFF1F7A65)),
+            start = Offset(gradientShiftOffset * 0.5f, 0f),
+            end = Offset(1000f, 1400f)
+        )
+        "CYBER" -> androidx.compose.ui.graphics.Brush.linearGradient(
+            colors = listOf(Color(0xFF180A29), Color(0xFF38004C), Color(0xFF003853)),
+            start = Offset(0f, gradientShiftOffset),
+            end = Offset(1000f - gradientShiftOffset, 1400f)
+        )
         "WARM_CHARCOAL" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2C2421), Color(0xFF1C1715)))
-        "PASTEL" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2B2038), Color(0xFF473355), Color(0xFF3C2C47)))
+        "PASTEL" -> androidx.compose.ui.graphics.Brush.linearGradient(
+            colors = listOf(Color(0xFF2B2038), Color(0xFF473355), Color(0xFF3C2C47)),
+            start = Offset(gradientShiftOffset, gradientShiftOffset),
+            end = Offset(1000f, 1400f)
+        )
         "AMOLED" -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF000000), Color(0xFF000000)))
         else -> null
     }
@@ -556,7 +596,8 @@ fun ChatDetailScreen(
                             currentUserId = currentUserId,
                             showExactTimestamps = showExactTimestamps,
                             onMessageLongClick = { msg -> showMsgOptionsForMsg = msg },
-                            onReactionClick = { msg -> showReactionDetailsForMsg = msg }
+                            onReactionClick = { msg -> showReactionDetailsForMsg = msg },
+                            onReplySwipe = { msg -> viewModel.setReplyingMessage(msg) }
                         )
                     }
 
@@ -675,18 +716,58 @@ fun ChatDetailScreen(
                     color = MaterialTheme.colorScheme.surface
                 ) {
                     if (!canSendMessage) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            contentAlignment = Alignment.Center
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = if (isBlocked) "You blocked this contact" else "Only admins can send messages",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (isBlocked) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                        Text(
+                                            text = "You blocked this contact",
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.Red
+                                        )
+                                        Text(
+                                            text = "You cannot send messages or call until unblocked",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Button(
+                                        onClick = { viewModel.toggleBlockUser(chatId, false) },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = PulseGreen,
+                                            contentColor = Color.White
+                                        ),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("Unblock", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Only admins can send messages in this group",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     } else {
                         Row(
@@ -772,39 +853,54 @@ fun ChatDetailScreen(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(12.dp)
+                                        .size(10.dp)
                                         .clip(CircleShape)
                                         .background(CallEndRed)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = String.format(Locale.getDefault(), "Recording... %02d:%02d", recordSeconds / 60, recordSeconds % 60),
+                                    text = String.format(Locale.getDefault(), "%02d:%02d", recordSeconds / 60, recordSeconds % 60),
                                     color = CallEndRed,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
+                                    fontSize = 13.sp
                                 )
-                                Spacer(modifier = Modifier.weight(1f))
-                                IconButton(onClick = { isRecordingVoiceNote = false }) {
+                                Spacer(modifier = Modifier.width(10.dp))
+                                // Live dynamic soundwave equalizer
+                                LiveRecordingSoundWave(
+                                    modifier = Modifier.weight(1f),
+                                    barColor = CallEndRed
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                IconButton(
+                                    onClick = { isRecordingVoiceNote = false },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
                                     Icon(Icons.Default.Close, contentDescription = "Cancel Recording", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
 
-                            IconButton(
-                                onClick = {
-                                    val durationStr = String.format(Locale.getDefault(), "%02d:%02d", recordSeconds / 60, recordSeconds % 60)
-                                    viewModel.sendMessage(
-                                        chatId = chatId,
-                                        content = "Voice note ($durationStr)",
-                                        type = MessageType.VOICE_NOTE,
-                                        mediaUrl = "audio_sample.mp3"
-                                    )
-                                    isRecordingVoiceNote = false
-                                },
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .background(PulseGreen, CircleShape)
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send Voice Note", tint = Color.White)
+                            Box(contentAlignment = Alignment.Center) {
+                                SonarPulseRipple(
+                                    targetSize = 48.dp,
+                                    rippleColor = PulseGreen
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val durationStr = String.format(Locale.getDefault(), "%02d:%02d", recordSeconds / 60, recordSeconds % 60)
+                                        viewModel.sendMessage(
+                                            chatId = chatId,
+                                            content = "Voice note ($durationStr)",
+                                            type = MessageType.VOICE_NOTE,
+                                            mediaUrl = "audio_sample.mp3"
+                                        )
+                                        isRecordingVoiceNote = false
+                                    },
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .background(PulseGreen, CircleShape)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send Voice Note", tint = Color.White)
+                                }
                             }
                         } else if (editingMessage != null) {
                             // Edit message save button
@@ -1979,7 +2075,8 @@ fun GroupedMessageBubbleRow(
     currentUserId: String,
     showExactTimestamps: Boolean = true,
     onMessageLongClick: (MessageEntity) -> Unit,
-    onReactionClick: (MessageEntity) -> Unit
+    onReactionClick: (MessageEntity) -> Unit,
+    onReplySwipe: (MessageEntity) -> Unit = {}
 ) {
     val isOutgoing = group.isOutgoing
     val bubbleColor = if (isOutgoing) {
@@ -1991,13 +2088,114 @@ fun GroupedMessageBubbleRow(
     val alignment = if (isOutgoing) Alignment.CenterEnd else Alignment.CenterStart
     val horizontalAlignment = if (isOutgoing) Alignment.End else Alignment.Start
 
+    // Spring-Loaded Pop-In Entry Animation
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        entered = true
+    }
+
+    val bubbleScale by animateFloatAsState(
+        targetValue = if (entered) 1f else 0.85f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "bubbleScale"
+    )
+    val bubbleAlpha by animateFloatAsState(
+        targetValue = if (entered) 1f else 0f,
+        animationSpec = tween(180),
+        label = "bubbleAlpha"
+    )
+    val bubbleSlideY by animateFloatAsState(
+        targetValue = if (entered) 0f else 16f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "bubbleSlideY"
+    )
+
+    // Swipe-to-Reply Drag State
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    val animatedOffsetX by animateFloatAsState(
+        targetValue = dragOffsetX,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "swipeToReplyOffset"
+    )
+
+    val dragProgress = (kotlin.math.abs(animatedOffsetX) / 60f).coerceIn(0f, 1f)
+
     Box(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = bubbleScale
+                scaleY = bubbleScale
+                alpha = bubbleAlpha
+                translationY = bubbleSlideY
+            },
         contentAlignment = alignment
     ) {
+        // Swipe to reply background curved icon
+        if (animatedOffsetX != 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(alignment)
+                    .padding(horizontal = 8.dp),
+                contentAlignment = if (isOutgoing) Alignment.CenterEnd else Alignment.CenterStart
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .scale(0.5f + (0.5f * dragProgress))
+                        .rotate(if (isOutgoing) -15f * dragProgress else 15f * dragProgress)
+                        .background(PulseGreen.copy(alpha = 0.2f + (0.6f * dragProgress)), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Reply,
+                        contentDescription = "Swipe to reply",
+                        tint = if (dragProgress >= 0.7f) PulseGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+
         Column(
             horizontalAlignment = horizontalAlignment,
-            modifier = Modifier.widthIn(max = 300.dp)
+            modifier = Modifier
+                .widthIn(max = 300.dp)
+                .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
+                .pointerInput(group.groupKey) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (kotlin.math.abs(dragOffsetX) >= 50f) {
+                                val replyTarget = group.messages.lastOrNull()
+                                if (replyTarget != null) {
+                                    onReplySwipe(replyTarget)
+                                }
+                            }
+                            dragOffsetX = 0f
+                        },
+                        onDragCancel = {
+                            dragOffsetX = 0f
+                        },
+                        onHorizontalDrag = { _, dragAmount ->
+                            val newOffset = dragOffsetX + dragAmount * 0.6f
+                            dragOffsetX = if (isOutgoing) {
+                                newOffset.coerceIn(-80f, 0f)
+                            } else {
+                                newOffset.coerceIn(0f, 80f)
+                            }
+                        }
+                    )
+                }
         ) {
             // Group Sender Name (shown only for incoming messages in group chats)
             if (!isOutgoing && isGroupChat && group.senderName.isNotBlank()) {
@@ -2283,6 +2481,17 @@ fun MessageReactionsLayout(
     ) {
         grouped.forEach { (emoji, list) ->
             val hasUserReacted = list.any { it.userId == currentUserId }
+            var isBursting by remember { mutableStateOf(false) }
+
+            val badgeScale by animateFloatAsState(
+                targetValue = if (isBursting) 1.35f else 1.0f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                ),
+                label = "badgeScale"
+            )
+
             val badgeBg = if (hasUserReacted) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
@@ -2296,10 +2505,21 @@ fun MessageReactionsLayout(
 
             Box(
                 modifier = Modifier
+                    .scale(badgeScale)
                     .clip(RoundedCornerShape(12.dp))
                     .background(badgeBg)
+                    .clickable {
+                        isBursting = true
+                        onReactionClick()
+                    }
                     .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
+                LaunchedEffect(isBursting) {
+                    if (isBursting) {
+                        kotlinx.coroutines.delay(200)
+                        isBursting = false
+                    }
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)

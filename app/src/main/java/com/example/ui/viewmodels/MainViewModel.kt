@@ -326,8 +326,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             app.webSocketService.incomingCallSignal.collect { callSignal ->
                 if (callSignal != null) {
-                    _activeCall.value = callSignal
-                    _isCallActiveScreenOpen.value = true
+                    val allChats = repository.database.chatDao().getAllChatsOnce()
+                    val isCallerBlocked = allChats.any {
+                        (it.title.equals(callSignal.contactName, ignoreCase = true) ||
+                         it.username.equals(callSignal.contactUsername, ignoreCase = true) ||
+                         it.id.contains(callSignal.contactName.lowercase())) && it.isBlocked
+                    }
+                    if (!isCallerBlocked) {
+                        _activeCall.value = callSignal
+                        _isCallActiveScreenOpen.value = true
+                    } else {
+                        app.webSocketService.clearCallSignal()
+                    }
                 }
             }
         }
@@ -456,6 +466,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val reply = _replyingToMessage.value
         viewModelScope.launch {
+            val existingChat = repository.database.chatDao().getChatByIdOnce(chatId)
+            if (existingChat?.isBlocked == true) {
+                // Prevent sending to blocked users
+                return@launch
+            }
+
             val user = currentUser.value
             val currentUserId = user?.id ?: "usr_google_irfan_9075"
             val currentUserName = user?.displayName ?: "Mohammad Irfan Khan"
@@ -464,13 +480,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val msgId = "msg_" + java.util.UUID.randomUUID().toString().take(8)
             val currentTime = System.currentTimeMillis()
 
+            // End-to-End Encrypted content for network & storage
+            val encryptedContent = com.example.util.E2EEncryptionManager.encrypt(content, chatId)
+
             val msgEntity = MessageEntity(
                 id = msgId,
                 chatId = chatId,
                 senderId = currentUserId,
                 senderName = currentUserName,
                 senderAvatar = currentUserAvatar,
-                content = content,
+                content = encryptedContent,
                 timestamp = currentTime,
                 status = MessageStatus.SENT.name,
                 type = type.name,
@@ -625,24 +644,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val call = CallLogEntity(
-            id = "call_" + System.currentTimeMillis(),
-            contactId = "usr_contact_" + contactName.take(4),
-            contactName = contactName,
-            contactUsername = handle,
-            contactAvatar = contactAvatar,
-            callType = if (isVideo) CallType.VIDEO.name else CallType.VOICE.name,
-            isIncoming = false,
-            isMissed = false,
-            timestamp = System.currentTimeMillis(),
-            durationSeconds = 0
-        )
-        _isGroupCall.value = false
-        _groupParticipants.value = emptyList()
-        _activeCall.value = call
-        _isCallActiveScreenOpen.value = true
-
         viewModelScope.launch {
+            val allChats = repository.database.chatDao().getAllChatsOnce()
+            val isTargetBlocked = allChats.any {
+                (it.title.equals(contactName, ignoreCase = true) ||
+                 it.username.equals(handle, ignoreCase = true) ||
+                 it.id.contains(contactName.lowercase())) && it.isBlocked
+            }
+            if (isTargetBlocked) {
+                // Blocked contact cannot be called
+                return@launch
+            }
+
+            val call = CallLogEntity(
+                id = "call_" + System.currentTimeMillis(),
+                contactId = "usr_contact_" + contactName.take(4),
+                contactName = contactName,
+                contactUsername = handle,
+                contactAvatar = contactAvatar,
+                callType = if (isVideo) CallType.VIDEO.name else CallType.VOICE.name,
+                isIncoming = false,
+                isMissed = false,
+                timestamp = System.currentTimeMillis(),
+                durationSeconds = 0
+            )
+            _isGroupCall.value = false
+            _groupParticipants.value = emptyList()
+            _activeCall.value = call
+            _isCallActiveScreenOpen.value = true
+
             repository.addCallLog(
                 contactName = contactName,
                 contactAvatar = contactAvatar,
@@ -669,6 +699,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         return withContext(Dispatchers.IO) {
+            val allChats = repository.database.chatDao().getAllChatsOnce()
+            val isTargetBlocked = allChats.any {
+                (it.username.equals(cleanUsername, ignoreCase = true) ||
+                 it.title.equals(cleanUsername.removePrefix("@"), ignoreCase = true)) && it.isBlocked
+            }
+            if (isTargetBlocked) {
+                return@withContext Pair(false, "User $cleanUsername is blocked. Please unblock in Settings or Chat to start a call.")
+            }
+
             val firestoreUser = firestoreService.getUserByUsername(cleanUsername)
             val userToCall = if (firestoreUser != null) {
                 firestoreUser
@@ -694,6 +733,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             return@withContext Pair(true, "Calling ${userToCall.displayName}")
+        }
+    }
+
+    fun blockUserByUsername(username: String, displayName: String = "") {
+        viewModelScope.launch {
+            val cleanHandle = if (username.startsWith("@")) username else "@$username"
+            val existingChats = repository.database.chatDao().getAllChatsOnce()
+            val chat = existingChats.firstOrNull { it.username.equals(cleanHandle, ignoreCase = true) }
+            if (chat != null) {
+                repository.toggleBlockUser(chat.id, true)
+            } else {
+                val name = displayName.ifBlank { cleanHandle.removePrefix("@").replaceFirstChar { it.uppercase() } }
+                val newChatId = "chat_" + cleanHandle.removePrefix("@")
+                val newChat = ChatEntity(
+                    id = newChatId,
+                    title = name,
+                    username = cleanHandle,
+                    isGroup = false,
+                    avatarUrl = "https://picsum.photos/seed/${cleanHandle}/300/300",
+                    lastMessageText = "Blocked contact",
+                    lastMessageTimestamp = System.currentTimeMillis(),
+                    isBlocked = true
+                )
+                repository.database.chatDao().insertOrUpdateChat(newChat)
+            }
         }
     }
 

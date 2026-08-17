@@ -541,12 +541,10 @@ fun CallActiveOverlay(
                         ) {
                             if (!isVideoOn) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    // Pulsing Audio Ripple Effect
-                                    Box(
-                                        modifier = Modifier
-                                            .size(160.dp)
-                                            .clip(CircleShape)
-                                            .background(VLinkCyan.copy(alpha = 0.15f))
+                                    // Animated Sonar Pulse Calling Rings
+                                    SonarPulseRipple(
+                                        targetSize = 160.dp,
+                                        rippleColor = if (isConnected) VLinkCyan else Color(0xFFFFB74D)
                                     )
                                     PulseAvatar(
                                         imageUrl = call.contactAvatar,

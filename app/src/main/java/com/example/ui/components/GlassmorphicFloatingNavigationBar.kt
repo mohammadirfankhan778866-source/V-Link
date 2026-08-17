@@ -99,8 +99,8 @@ fun GlassmorphicFloatingNavigationBar(
                     brush = glassBorder,
                     shape = RoundedCornerShape(36.dp)
                 )
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            contentAlignment = Alignment.CenterStart
         ) {
             Row(
                 modifier = Modifier.fillMaxSize(),
@@ -110,23 +110,32 @@ fun GlassmorphicFloatingNavigationBar(
                 items.forEach { item ->
                     val isSelected = currentTab == item.tab
 
-                    // Animated Icon Scale
+                    // Spring-loaded scale animation
                     val iconScale by animateFloatAsState(
-                        targetValue = if (isSelected) 1.15f else 1.0f,
+                        targetValue = if (isSelected) 1.18f else 1.0f,
                         animationSpec = spring(
                             dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
+                            stiffness = Spring.StiffnessMediumLow
                         ),
                         label = "iconScale"
                     )
 
-                    // Animated Active Glass Bubble Color
+                    // Animated Active Glass Bubble Indicator
                     val activeBubbleColor by animateColorAsState(
                         targetValue = if (isSelected) {
-                            if (isDark) VLinkCyan.copy(alpha = 0.2f) else VLinkCyan.copy(alpha = 0.15f)
+                            if (isDark) VLinkCyan.copy(alpha = 0.22f) else VLinkCyan.copy(alpha = 0.18f)
                         } else Color.Transparent,
-                        animationSpec = tween(durationMillis = 280),
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMedium),
                         label = "bubbleColor"
+                    )
+
+                    // Animated Border on Selected Tab
+                    val activeBorderColor by animateColorAsState(
+                        targetValue = if (isSelected) {
+                            if (isDark) VLinkCyan.copy(alpha = 0.4f) else VLinkCyan.copy(alpha = 0.3f)
+                        } else Color.Transparent,
+                        animationSpec = tween(durationMillis = 200),
+                        label = "activeBorderColor"
                     )
 
                     // Animated Icon Tint
@@ -146,6 +155,11 @@ fun GlassmorphicFloatingNavigationBar(
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(24.dp))
                             .background(activeBubbleColor)
+                            .border(
+                                width = if (isSelected) 1.dp else 0.dp,
+                                color = activeBorderColor,
+                                shape = RoundedCornerShape(24.dp)
+                            )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = ripple(bounded = true, color = VLinkCyan)

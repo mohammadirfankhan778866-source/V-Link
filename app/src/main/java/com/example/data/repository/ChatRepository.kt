@@ -5,6 +5,7 @@ import com.example.data.db.PulseDatabase
 import com.example.data.models.*
 import com.example.data.network.PulseWebSocketService
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import java.util.UUID
 
 data class ReactionItem(
@@ -111,7 +112,15 @@ class ChatRepository(
     }
 
     fun getMessagesForChat(chatId: String): Flow<List<MessageEntity>> {
-        return database.messageDao().getMessagesForChat(chatId)
+        return database.messageDao().getMessagesForChat(chatId).map { list ->
+            list.map { msg ->
+                if (com.example.util.E2EEncryptionManager.isEncrypted(msg.content)) {
+                    msg.copy(content = com.example.util.E2EEncryptionManager.decrypt(msg.content, chatId))
+                } else {
+                    msg
+                }
+            }
+        }
     }
 
     fun getChatById(chatId: String): Flow<ChatEntity?> {
@@ -123,7 +132,15 @@ class ChatRepository(
     }
 
     fun searchMessages(query: String): Flow<List<MessageEntity>> {
-        return database.messageDao().searchMessages(query)
+        return database.messageDao().searchMessages(query).map { list ->
+            list.map { msg ->
+                if (com.example.util.E2EEncryptionManager.isEncrypted(msg.content)) {
+                    msg.copy(content = com.example.util.E2EEncryptionManager.decrypt(msg.content, msg.chatId))
+                } else {
+                    msg
+                }
+            }
+        }
     }
 
     suspend fun sendMessage(

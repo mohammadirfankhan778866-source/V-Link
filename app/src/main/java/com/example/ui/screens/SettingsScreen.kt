@@ -767,30 +767,133 @@ fun SettingsScreen(viewModel: MainViewModel) {
         // Blocked Contacts Modal
         if (showBlockedContactsModal) {
             val blockedChats = chats.filter { it.isBlocked }
+            var blockUsernameInput by remember { mutableStateOf("") }
+            var blockStatusMsg by remember { mutableStateOf("") }
+
             AlertDialog(
                 onDismissRequest = { showBlockedContactsModal = false },
-                title = { Text("Blocked Contacts", fontWeight = FontWeight.Bold) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.Block,
+                            contentDescription = null,
+                            tint = Color.Red,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Blocked Contacts", fontWeight = FontWeight.Bold)
+                    }
+                },
                 text = {
-                    if (blockedChats.isEmpty()) {
-                        Text("No blocked contacts.")
-                    } else {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Blocked users cannot send you direct messages, call your account holder profile, or see your live typing status.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Block a Contact by Username",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                OutlinedTextField(
+                                    value = blockUsernameInput,
+                                    onValueChange = {
+                                        blockUsernameInput = it
+                                        blockStatusMsg = ""
+                                    },
+                                    placeholder = { Text("e.g. @alexpulse or alex") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Button(
+                                    onClick = {
+                                        if (blockUsernameInput.isNotBlank()) {
+                                            viewModel.blockUserByUsername(blockUsernameInput.trim())
+                                            blockStatusMsg = "User ${blockUsernameInput.trim()} has been blocked."
+                                            blockUsernameInput = ""
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color.Red.copy(alpha = 0.85f),
+                                        contentColor = Color.White
+                                    ),
+                                    modifier = Modifier.align(Alignment.End)
+                                ) {
+                                    Icon(Icons.Outlined.Block, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Block User", fontSize = 13.sp)
+                                }
+                                if (blockStatusMsg.isNotEmpty()) {
+                                    Text(
+                                        text = blockStatusMsg,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = PulseGreen
+                                    )
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "Currently Blocked (${blockedChats.size})",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        if (blockedChats.isEmpty()) {
+                            Text(
+                                text = "No contacts are currently blocked.",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        } else {
                             blockedChats.forEach { chat ->
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                                        .padding(10.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(chat.title, fontWeight = FontWeight.Bold)
-                                    TextButton(onClick = {
-                                        viewModel.toggleBlockUser(chat.id, false)
-                                    }) {
-                                        Text("Unblock", color = Color.Red)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(chat.title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                        if (chat.username.isNotEmpty()) {
+                                            Text(chat.username, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                    Button(
+                                        onClick = {
+                                            viewModel.toggleBlockUser(chat.id, false)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Text("Unblock", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -799,7 +902,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 },
                 confirmButton = {
                     TextButton(onClick = { showBlockedContactsModal = false }) {
-                        Text("Close")
+                        Text("Done")
                     }
                 }
             )
