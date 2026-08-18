@@ -77,7 +77,6 @@ fun AuthScreen(
     var isResetLoading by remember { mutableStateOf(false) }
     var resetStatusMessage by remember { mutableStateOf("") }
     var resetIsSuccess by remember { mutableStateOf(false) }
-    var simulatedOtpNotice by remember { mutableStateOf<String?>(null) }
 
     // Real-time checks: Username
     var isCheckingUsername by remember { mutableStateOf(false) }
@@ -479,7 +478,6 @@ fun AuthScreen(
                                         resetStatusMessage = ""
                                         resetIsSuccess = false
                                         resetStep = 1
-                                        simulatedOtpNotice = null
                                         showForgotPasswordDialog = true
                                     },
                                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
@@ -1100,34 +1098,14 @@ fun AuthScreen(
                                 modifier = Modifier.padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Shield, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(20.dp))
+                                Icon(Icons.Default.MarkEmailRead, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(22.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Security Verification: Please enter the 6-digit security code dispatched to your registered email.",
+                                    text = "Security code dispatched to your registered email. Please check your inbox and enter the 6-digit verification code below.",
                                     fontSize = 12.sp,
                                     lineHeight = 16.sp,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
-                            }
-                        }
-
-                        if (simulatedOtpNotice != null) {
-                            Surface(
-                                color = Color(0xFF004D40).copy(alpha = 0.25f),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.MarkEmailRead, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(20.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
-                                        Text("Email Verification Code:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(simulatedOtpNotice ?: "", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = VLinkCyan, letterSpacing = 2.sp)
-                                    }
-                                }
                             }
                         }
 
@@ -1172,14 +1150,11 @@ fun AuthScreen(
                                         isResetLoading = false
                                         resetStatusMessage = result.second
                                         resetIsSuccess = result.first
-                                        if (result.first) {
-                                            simulatedOtpNotice = result.third
-                                        }
                                     }
                                 },
                                 enabled = !isResetLoading
                             ) {
-                                Text("Resend Code", fontSize = 12.sp, color = VLinkCyan)
+                                Text("Resend Email", fontSize = 12.sp, color = VLinkCyan)
                             }
                         }
                     }
@@ -1289,7 +1264,6 @@ fun AuthScreen(
                                     resetStatusMessage = result.second
                                     resetIsSuccess = result.first
                                     if (result.first) {
-                                        simulatedOtpNotice = result.third
                                         resetStep = 2
                                     }
                                 }

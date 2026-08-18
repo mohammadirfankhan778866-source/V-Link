@@ -136,6 +136,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
     )
 
+    private val _worldwideSearchResults = MutableStateFlow<List<UserEntity>>(emptyList())
+    val worldwideSearchResults: StateFlow<List<UserEntity>> = _worldwideSearchResults
+
+    private val _isSearchingWorldwide = MutableStateFlow(false)
+    val isSearchingWorldwide: StateFlow<Boolean> = _isSearchingWorldwide
+
     val connectionState: StateFlow<com.example.data.network.WebSocketState> = app.webSocketService.connectionState
 
     fun updateOnlineStatus(status: String) {
@@ -391,12 +397,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startChatWithContact(contact: UserEntity) {
         val chatId = "chat_" + contact.id.replace("usr_", "")
         viewModelScope.launch {
+            // Ensure contact is saved in local DB
+            repository.database.userDao().insertOrUpdateUser(contact.copy(isCurrentUser = false))
             val existingChat = repository.database.chatDao().getChatByIdOnce(chatId)
             if (existingChat == null) {
                 val newChat = ChatEntity(
                     id = chatId,
                     title = contact.displayName,
-                    username = contact.username,
+                    username = if (contact.username.startsWith("@")) contact.username else "@${contact.username}",
                     isGroup = false,
                     avatarUrl = contact.profilePictureUrl,
                     lastMessageText = "Tap to start chatting",
@@ -408,23 +416,82 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addContact(name: String, username: String, bio: String) {
-        viewModelScope.launch {
-            val newUserId = "usr_" + java.util.UUID.randomUUID().toString().take(6)
-            val cleanHandle = if (username.startsWith("@")) username else "@$username"
-            val newUser = UserEntity(
-                id = newUserId,
-                displayName = name,
-                username = cleanHandle,
-                email = "${name.lowercase().replace(" ", "")}@pulse.chat",
-                profilePictureUrl = "https://picsum.photos/seed/${name.lowercase()}/300/300",
-                bio = bio.ifBlank { "Hey there! I am using V-Link." },
-                onlineStatus = "ONLINE",
-                isCurrentUser = false
-            )
-            repository.database.userDao().insertOrUpdateUser(newUser)
-            startChatWithContact(newUser)
+    /**
+     * Looks up a registered user by username from Firestore or Room DB.
+     * Returns the actual registered UserEntity, or null if no user exists.
+     */
+    suspend fun findRegisteredUserByUsername(usernameInput: String): UserEntity? {
+        val cleanHandle = usernameInput.trim().removePrefix("@").lowercase()
+        if (cleanHandle.isBlank()) return null
+
+        return withContext(Dispatchers.IO) {
+            // 1. Check remote Firestore
+            val firestoreUser = firestoreService.getUserByUsername(cleanHandle)
+            if (firestoreUser != null) {
+                repository.database.userDao().insertOrUpdateUser(firestoreUser.copy(isCurrentUser = false))
+                return@withContext firestoreUser
+            }
+
+            // 2. Check local database
+            val localUser = repository.database.userDao().getUserByUsername(cleanHandle)
+                ?: repository.database.userDao().getUserByUsername("@$cleanHandle")
+            if (localUser != null) {
+                return@withContext localUser
+            }
+
+            val allUsers = repository.database.userDao().getAllUsersOnce()
+            allUsers.firstOrNull {
+                it.username.removePrefix("@").equals(cleanHandle, ignoreCase = true)
+            }
         }
+    }
+
+    /**
+     * Searches registered users worldwide by query handle or nickname.
+     */
+    fun searchWorldwideUsers(query: String) {
+        val q = query.trim()
+        if (q.isBlank()) {
+            _worldwideSearchResults.value = emptyList()
+            _isSearchingWorldwide.value = false
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _isSearchingWorldwide.value = true
+            val myUserId = currentUser.value?.id
+            val myUsername = currentUser.value?.username?.lowercase()?.removePrefix("@")
+
+            val firestoreResults = firestoreService.searchUsers(q)
+            val localUsers = repository.database.userDao().getAllUsersOnce().filter {
+                it.username.contains(q, ignoreCase = true) || it.displayName.contains(q, ignoreCase = true)
+            }
+
+            val combined = (firestoreResults + localUsers)
+                .distinctBy { it.id }
+                .filter { it.id != myUserId && it.username.lowercase().removePrefix("@") != myUsername }
+
+            _worldwideSearchResults.value = combined
+            _isSearchingWorldwide.value = false
+        }
+    }
+
+    /**
+     * Starts a chat with a verified user handle only if they exist in V-Link.
+     */
+    suspend fun startChatWithUsername(usernameInput: String): Pair<Boolean, String> {
+        val user = findRegisteredUserByUsername(usernameInput)
+        if (user == null) {
+            return Pair(false, "User '$usernameInput' does not exist on V-Link. Only registered accounts can be contacted.")
+        }
+        val myUser = currentUser.value
+        if (user.id == myUser?.id || user.username.equals(myUser?.username, ignoreCase = true)) {
+            return Pair(false, "You cannot start a direct chat with your own account.")
+        }
+        withContext(Dispatchers.Main) {
+            startChatWithContact(user)
+        }
+        return Pair(true, "Chat started with ${user.displayName}")
     }
 
     fun closeChatDetail() {
@@ -440,6 +507,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
+        searchWorldwideUsers(query)
     }
 
     fun setFilter(filter: String) {
@@ -1176,10 +1244,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 android.util.Log.w("MainViewModel", "Firebase reset email dispatch warning: ${e.message}")
             }
 
+            // Mask email for user privacy and security
+            val atIndex = targetEmail.indexOf('@')
+            val maskedEmail = if (atIndex > 2) {
+                targetEmail.take(1) + "***" + targetEmail.substring(atIndex - 1)
+            } else {
+                "***" + targetEmail.substring(atIndex)
+            }
+
             return@withContext Triple(
                 true,
-                "A 6-digit verification code has been dispatched to $targetEmail. Please enter it below to verify account ownership.",
-                secureOtp
+                "A password reset verification email has been dispatched to $maskedEmail. Please check your email inbox to complete verification.",
+                null
             )
         }
     }

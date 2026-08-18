@@ -244,7 +244,7 @@ class FirestoreService {
                     bio = snapshot.getString("bio") ?: "",
                     emailVerified = snapshot.getBoolean("emailVerified") ?: false,
                     authProvider = snapshot.getString("authProvider") ?: "",
-                    isCurrentUser = true
+                    isCurrentUser = false
                 )
             } else {
                 null
@@ -252,6 +252,55 @@ class FirestoreService {
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching user from Firestore: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * Searches registered users in Firestore by username or display name.
+     */
+    suspend fun searchUsers(query: String): List<UserEntity> {
+        val db = firestore ?: return emptyList()
+        val cleanQuery = query.lowercase().removePrefix("@").trim()
+        if (cleanQuery.isBlank()) return emptyList()
+
+        return try {
+            val results = mutableListOf<UserEntity>()
+            // 1. Search usernames collection by prefix
+            val usernameDocs = db.collection("usernames")
+                .whereGreaterThanOrEqualTo("username", "@$cleanQuery")
+                .whereLessThanOrEqualTo("username", "@$cleanQuery\uf8ff")
+                .limit(10)
+                .get()
+                .await()
+
+            for (doc in usernameDocs.documents) {
+                val userId = doc.getString("userId") ?: continue
+                val user = getUser(userId)
+                if (user != null && results.none { it.id == user.id }) {
+                    results.add(user)
+                }
+            }
+
+            // 2. Also search users collection by displayName
+            val userDocs = db.collection("users")
+                .whereGreaterThanOrEqualTo("displayName", query)
+                .whereLessThanOrEqualTo("displayName", query + "\uf8ff")
+                .limit(10)
+                .get()
+                .await()
+
+            for (doc in userDocs.documents) {
+                val userId = doc.getString("id") ?: doc.id
+                val user = getUser(userId)
+                if (user != null && results.none { it.id == user.id }) {
+                    results.add(user)
+                }
+            }
+
+            results
+        } catch (e: Exception) {
+            Log.e(TAG, "Error searching users in Firestore: ${e.message}")
+            emptyList()
         }
     }
 

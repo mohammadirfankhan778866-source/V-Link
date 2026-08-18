@@ -42,6 +42,8 @@ fun ChatsScreen(
     val chats by viewModel.chats.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedFilter by viewModel.selectedFilter.collectAsState()
+    val worldwideResults by viewModel.worldwideSearchResults.collectAsState()
+    val isSearchingWorldwide by viewModel.isSearchingWorldwide.collectAsState()
     var menuExpanded by remember { mutableStateOf(false) }
     var selectedChatForContextMenu by remember { mutableStateOf<ChatEntity?>(null) }
 
@@ -242,7 +244,7 @@ fun ChatsScreen(
                 onFilterSelected = { viewModel.setFilter(it) }
             )
 
-            if (chats.isEmpty()) {
+            if (chats.isEmpty() && worldwideResults.isEmpty() && !isSearchingWorldwide) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -258,12 +260,12 @@ fun ChatsScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = if (searchQuery.isNotEmpty()) "No matching conversations" else "No chats found",
+                            text = if (searchQuery.isNotEmpty()) "No matching conversations or users" else "No chats found",
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = if (searchQuery.isNotEmpty()) "Try searching with a different name or keyword" else "Tap the + message button to start a new conversation",
+                            text = if (searchQuery.isNotEmpty()) "Try searching for another @username worldwide" else "Tap the + message button to start a new conversation",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
@@ -274,6 +276,115 @@ fun ChatsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
+                    // Worldwide User Directory Search Results
+                    if (searchQuery.isNotBlank()) {
+                        item {
+                            Surface(
+                                color = PulseGreen.copy(alpha = 0.08f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Public, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "V-LINK USERS WORLDWIDE (${worldwideResults.size})",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PulseGreen
+                                    )
+                                    if (isSearchingWorldwide) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = PulseGreen)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (worldwideResults.isNotEmpty()) {
+                            items(worldwideResults, key = { "worldwide_${it.id}" }) { user ->
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    tonalElevation = 1.dp
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        PulseAvatar(imageUrl = user.profilePictureUrl, name = user.displayName, size = 44.dp)
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = user.displayName,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 15.sp
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Icon(Icons.Default.Verified, contentDescription = "Registered", tint = PulseGreen, modifier = Modifier.size(14.dp))
+                                            }
+                                            Text(
+                                                text = if (user.username.startsWith("@")) user.username else "@${user.username}",
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            if (user.bio.isNotBlank()) {
+                                                Text(
+                                                    text = user.bio,
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+
+                                        Button(
+                                            onClick = {
+                                                viewModel.startChatWithContact(user)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                            modifier = Modifier.height(36.dp)
+                                        ) {
+                                            Icon(Icons.Default.Chat, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Chat", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (!isSearchingWorldwide) {
+                            item {
+                                Text(
+                                    text = "No registered users matching '@${searchQuery.removePrefix("@")}'",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        item {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
+                            )
+                        }
+                    }
+
                     // Pinned Section
                     if (pinnedChats.isNotEmpty()) {
                         item {
@@ -302,10 +413,10 @@ fun ChatsScreen(
 
                     // All Chats Section
                     if (unpinnedChats.isNotEmpty()) {
-                        if (pinnedChats.isNotEmpty()) {
+                        if (pinnedChats.isNotEmpty() || searchQuery.isNotBlank()) {
                             item {
                                 Text(
-                                    text = "ALL CHATS",
+                                    text = if (searchQuery.isNotBlank()) "CONVERSATIONS" else "ALL CHATS",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
