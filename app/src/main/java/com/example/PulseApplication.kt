@@ -44,7 +44,18 @@ class PulseApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         try {
-            com.google.firebase.FirebaseApp.initializeApp(this)
+            if (com.google.firebase.FirebaseApp.getApps(this).isEmpty()) {
+                com.google.firebase.FirebaseApp.initializeApp(this)
+            }
+            try {
+                val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                val settings = com.google.firebase.firestore.FirebaseFirestoreSettings.Builder()
+                    .setPersistenceEnabled(true)
+                    .build()
+                db.firestoreSettings = settings
+            } catch (e: Exception) {
+                android.util.Log.w("PulseApplication", "Firestore early setup note: ${e.message}")
+            }
             com.example.util.FirebaseDiagnostics.runDiagnostics(this)
         } catch (e: Exception) {
             android.util.Log.e("PulseApplication", "Failed to initialize FirebaseApp: ${e.message}")
@@ -67,19 +78,23 @@ class PulseApplication : Application() {
     }
 
     private fun setupSyncWorker() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-            
-        val syncWorkRequest = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(constraints)
-            .build()
-            
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "PulseSyncWorker",
-            androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-            syncWorkRequest
-        )
+        try {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+                
+            val syncWorkRequest = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
+                .setConstraints(constraints)
+                .build()
+                
+            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "PulseSyncWorker",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                syncWorkRequest
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("PulseApplication", "WorkManager initialization skipped: ${e.message}")
+        }
     }
 
     private fun createNotificationChannels() {

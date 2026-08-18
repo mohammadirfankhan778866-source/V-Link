@@ -16,10 +16,10 @@ interface UserDao {
     @Query("SELECT * FROM users WHERE id = :id LIMIT 1")
     suspend fun getUserById(id: String): UserEntity?
 
-    @Query("SELECT * FROM users WHERE LOWER(email) = LOWER(:email) LIMIT 1")
+    @Query("SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(:email)) LIMIT 1")
     suspend fun getUserByEmail(email: String): UserEntity?
 
-    @Query("SELECT * FROM users WHERE LOWER(username) = LOWER(:username) OR LOWER(username) = LOWER('@' || :username) LIMIT 1")
+    @Query("SELECT * FROM users WHERE REPLACE(LOWER(TRIM(username)), '@', '') = REPLACE(LOWER(TRIM(:username)), '@', '') LIMIT 1")
     suspend fun getUserByUsername(username: String): UserEntity?
 
     @Query("SELECT * FROM users WHERE isCurrentUser = 0 ORDER BY displayName ASC")
@@ -49,10 +49,10 @@ interface UserDao {
 
 @Dao
 interface AccountCredentialDao {
-    @Query("SELECT * FROM account_credentials WHERE LOWER(email) = LOWER(:email) LIMIT 1")
+    @Query("SELECT * FROM account_credentials WHERE LOWER(TRIM(email)) = LOWER(TRIM(:email)) LIMIT 1")
     suspend fun getCredentialByEmail(email: String): AccountCredentialEntity?
 
-    @Query("SELECT * FROM account_credentials WHERE LOWER(username) = LOWER(:username) OR LOWER(username) = LOWER('@' || :username) LIMIT 1")
+    @Query("SELECT * FROM account_credentials WHERE REPLACE(LOWER(TRIM(username)), '@', '') = REPLACE(LOWER(TRIM(:username)), '@', '') LIMIT 1")
     suspend fun getCredentialByUsername(username: String): AccountCredentialEntity?
 
     @Query("SELECT * FROM account_credentials WHERE id = :id LIMIT 1")
@@ -60,6 +60,12 @@ interface AccountCredentialDao {
 
     @Query("SELECT * FROM account_credentials")
     suspend fun getAllCredentials(): List<AccountCredentialEntity>
+
+    @Query("UPDATE account_credentials SET passwordHash = :hash, passwordSalt = :salt WHERE LOWER(TRIM(email)) = LOWER(TRIM(:email))")
+    suspend fun updatePasswordByEmail(email: String, hash: String, salt: String)
+
+    @Query("UPDATE account_credentials SET passwordHash = :hash, passwordSalt = :salt WHERE id = :id")
+    suspend fun updatePasswordById(id: String, hash: String, salt: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCredential(credential: AccountCredentialEntity)

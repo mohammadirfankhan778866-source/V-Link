@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,9 +23,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -62,12 +65,19 @@ fun AuthScreen(
     var registerPasswordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
 
-    // Forgot Password states
+    // Secure Forgot Password states
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
-    var forgotPasswordInput by remember { mutableStateOf("") }
-    var isSendingResetLink by remember { mutableStateOf(false) }
-    var forgotPasswordMessage by remember { mutableStateOf("") }
-    var forgotPasswordIsSuccess by remember { mutableStateOf(false) }
+    var resetStep by remember { mutableStateOf(1) } // 1: Account Info, 2: OTP Verification, 3: Set New Password
+    var resetIdentifierInput by remember { mutableStateOf("") }
+    var resetOtpCodeInput by remember { mutableStateOf("") }
+    var resetNewPasswordInput by remember { mutableStateOf("") }
+    var resetConfirmPasswordInput by remember { mutableStateOf("") }
+    var resetNewPasswordVisible by remember { mutableStateOf(false) }
+    var resetConfirmPasswordVisible by remember { mutableStateOf(false) }
+    var isResetLoading by remember { mutableStateOf(false) }
+    var resetStatusMessage by remember { mutableStateOf("") }
+    var resetIsSuccess by remember { mutableStateOf(false) }
+    var simulatedOtpNotice by remember { mutableStateOf<String?>(null) }
 
     // Real-time checks: Username
     var isCheckingUsername by remember { mutableStateOf(false) }
@@ -462,9 +472,14 @@ fun AuthScreen(
                             ) {
                                 TextButton(
                                     onClick = {
-                                        forgotPasswordInput = if (loginBackHandleInput.contains("@") && loginBackHandleInput.contains(".")) loginBackHandleInput else ""
-                                        forgotPasswordMessage = ""
-                                        forgotPasswordIsSuccess = false
+                                        resetIdentifierInput = loginBackHandleInput.trim()
+                                        resetOtpCodeInput = ""
+                                        resetNewPasswordInput = ""
+                                        resetConfirmPasswordInput = ""
+                                        resetStatusMessage = ""
+                                        resetIsSuccess = false
+                                        resetStep = 1
+                                        simulatedOtpNotice = null
                                         showForgotPasswordDialog = true
                                     },
                                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
@@ -972,49 +987,282 @@ fun AuthScreen(
     if (showForgotPasswordDialog) {
         AlertDialog(
             onDismissRequest = {
-                if (!isSendingResetLink) {
+                if (!isResetLoading) {
                     showForgotPasswordDialog = false
                 }
             },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan)
+                    Icon(Icons.Default.Security, contentDescription = null, tint = VLinkCyan)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Reset Password", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Secure Password Reset", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "Enter your registered email address below. A secure password reset link will be sent directly to your email inbox.",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 18.sp
-                    )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Security Step Indicator
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            .padding(vertical = 8.dp, horizontal = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceAround,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Step 1
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(if (resetStep >= 1) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("1", color = if (resetStep >= 1) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Account", fontSize = 11.sp, fontWeight = if (resetStep == 1) FontWeight.Bold else FontWeight.Normal, color = if (resetStep >= 1) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
 
-                    OutlinedTextField(
-                        value = forgotPasswordInput,
-                        onValueChange = {
-                            forgotPasswordInput = it
-                            forgotPasswordMessage = ""
-                        },
-                        label = { Text("Registered Email Address") },
-                        placeholder = { Text("e.g. name@domain.com") },
-                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
-                        singleLine = true,
-                        enabled = !isSendingResetLink,
-                        modifier = Modifier.fillMaxWidth().testTag("forgot_password_email_input")
-                    )
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
 
-                    if (forgotPasswordMessage.isNotEmpty()) {
+                        // Step 2
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(if (resetStep >= 2) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("2", color = if (resetStep >= 2) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Verify Code", fontSize = 11.sp, fontWeight = if (resetStep == 2) FontWeight.Bold else FontWeight.Normal, color = if (resetStep >= 2) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+
+                        // Step 3
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(if (resetStep >= 3) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("3", color = if (resetStep >= 3) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("New Password", fontSize = 11.sp, fontWeight = if (resetStep == 3) FontWeight.Bold else FontWeight.Normal, color = if (resetStep >= 3) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    // Step 1: Input Account
+                    if (resetStep == 1) {
+                        Text(
+                            text = "Enter your registered email address or @username. A secure 6-digit one-time verification code will be sent to the registered email to verify ownership.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 18.sp
+                        )
+
+                        OutlinedTextField(
+                            value = resetIdentifierInput,
+                            onValueChange = {
+                                resetIdentifierInput = it
+                                resetStatusMessage = ""
+                            },
+                            label = { Text("Registered Email or @username") },
+                            placeholder = { Text("e.g. name@domain.com or @irfan") },
+                            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
+                            singleLine = true,
+                            enabled = !isResetLoading,
+                            modifier = Modifier.fillMaxWidth().testTag("reset_identifier_input")
+                        )
+                    }
+
+                    // Step 2: Input OTP Verification Code
+                    if (resetStep == 2) {
                         Surface(
-                            color = if (forgotPasswordIsSuccess) Color(0xFF1B5E20).copy(alpha = 0.2f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Shield, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Security Verification: Please enter the 6-digit security code dispatched to your registered email.",
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+
+                        if (simulatedOtpNotice != null) {
+                            Surface(
+                                color = Color(0xFF004D40).copy(alpha = 0.25f),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.MarkEmailRead, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text("Email Verification Code:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(simulatedOtpNotice ?: "", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = VLinkCyan, letterSpacing = 2.sp)
+                                    }
+                                }
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = resetOtpCodeInput,
+                            onValueChange = {
+                                if (it.length <= 6) {
+                                    resetOtpCodeInput = it.filter { char -> char.isDigit() }
+                                    resetStatusMessage = ""
+                                }
+                            },
+                            label = { Text("6-Digit Verification Code") },
+                            placeholder = { Text("123456") },
+                            leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, tint = VLinkCyan) },
+                            singleLine = true,
+                            enabled = !isResetLoading,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth().testTag("reset_otp_input")
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    resetStep = 1
+                                    resetStatusMessage = ""
+                                },
+                                enabled = !isResetLoading
+                            ) {
+                                Text("Change Email", fontSize = 12.sp)
+                            }
+
+                            TextButton(
+                                onClick = {
+                                    isResetLoading = true
+                                    resetStatusMessage = ""
+                                    coroutineScope.launch {
+                                        val result = viewModel.requestPasswordResetCode(resetIdentifierInput.trim())
+                                        isResetLoading = false
+                                        resetStatusMessage = result.second
+                                        resetIsSuccess = result.first
+                                        if (result.first) {
+                                            simulatedOtpNotice = result.third
+                                        }
+                                    }
+                                },
+                                enabled = !isResetLoading
+                            ) {
+                                Text("Resend Code", fontSize = 12.sp, color = VLinkCyan)
+                            }
+                        }
+                    }
+
+                    // Step 3: Set New Password (Only after OTP verification)
+                    if (resetStep == 3) {
+                        Surface(
+                            color = Color(0xFF1B5E20).copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Account Ownership Verified! Please choose a new password.",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF4CAF50)
+                                )
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = resetNewPasswordInput,
+                            onValueChange = {
+                                resetNewPasswordInput = it
+                                resetStatusMessage = ""
+                            },
+                            label = { Text("New Password (min 6 chars)") },
+                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
+                            trailingIcon = {
+                                IconButton(onClick = { resetNewPasswordVisible = !resetNewPasswordVisible }) {
+                                    Icon(
+                                        imageVector = if (resetNewPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            },
+                            visualTransformation = if (resetNewPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            singleLine = true,
+                            enabled = !isResetLoading,
+                            modifier = Modifier.fillMaxWidth().testTag("reset_new_password_input")
+                        )
+
+                        OutlinedTextField(
+                            value = resetConfirmPasswordInput,
+                            onValueChange = {
+                                resetConfirmPasswordInput = it
+                                resetStatusMessage = ""
+                            },
+                            label = { Text("Confirm New Password") },
+                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
+                            trailingIcon = {
+                                IconButton(onClick = { resetConfirmPasswordVisible = !resetConfirmPasswordVisible }) {
+                                    Icon(
+                                        imageVector = if (resetConfirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            },
+                            visualTransformation = if (resetConfirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            singleLine = true,
+                            enabled = !isResetLoading,
+                            modifier = Modifier.fillMaxWidth().testTag("reset_confirm_password_input")
+                        )
+                    }
+
+                    // Status / Error message
+                    if (resetStatusMessage.isNotEmpty()) {
+                        Surface(
+                            color = if (resetIsSuccess) Color(0xFF1B5E20).copy(alpha = 0.2f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = forgotPasswordMessage,
-                                color = if (forgotPasswordIsSuccess) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onErrorContainer,
+                                text = resetStatusMessage,
+                                color = if (resetIsSuccess) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onErrorContainer,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 modifier = Modifier.padding(10.dp)
@@ -1024,45 +1272,119 @@ fun AuthScreen(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        if (forgotPasswordInput.isBlank()) {
-                            forgotPasswordMessage = "Please enter your registered email address."
-                            forgotPasswordIsSuccess = false
-                            return@Button
+                when (resetStep) {
+                    1 -> {
+                        Button(
+                            onClick = {
+                                if (resetIdentifierInput.isBlank()) {
+                                    resetStatusMessage = "Please enter your registered email address or @username."
+                                    resetIsSuccess = false
+                                    return@Button
+                                }
+                                isResetLoading = true
+                                resetStatusMessage = ""
+                                coroutineScope.launch {
+                                    val result = viewModel.requestPasswordResetCode(resetIdentifierInput.trim())
+                                    isResetLoading = false
+                                    resetStatusMessage = result.second
+                                    resetIsSuccess = result.first
+                                    if (result.first) {
+                                        simulatedOtpNotice = result.third
+                                        resetStep = 2
+                                    }
+                                }
+                            },
+                            enabled = !isResetLoading,
+                            colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                        ) {
+                            if (isResetLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Sending Code...")
+                            } else {
+                                Text("Send Verification Code", fontWeight = FontWeight.Bold)
+                            }
                         }
-                        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(forgotPasswordInput.trim()).matches()) {
-                            forgotPasswordMessage = "Please enter a valid email format (e.g. user@example.com)."
-                            forgotPasswordIsSuccess = false
-                            return@Button
+                    }
+                    2 -> {
+                        Button(
+                            onClick = {
+                                if (resetOtpCodeInput.length != 6) {
+                                    resetStatusMessage = "Please enter the full 6-digit verification code."
+                                    resetIsSuccess = false
+                                    return@Button
+                                }
+                                isResetLoading = true
+                                resetStatusMessage = ""
+                                coroutineScope.launch {
+                                    val result = viewModel.verifyPasswordResetCode(resetOtpCodeInput.trim())
+                                    isResetLoading = false
+                                    resetStatusMessage = result.second
+                                    resetIsSuccess = result.first
+                                    if (result.first) {
+                                        resetStep = 3
+                                    }
+                                }
+                            },
+                            enabled = !isResetLoading && resetOtpCodeInput.length == 6,
+                            colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                        ) {
+                            if (isResetLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Verifying...")
+                            } else {
+                                Text("Verify Security Code", fontWeight = FontWeight.Bold)
+                            }
                         }
-                        isSendingResetLink = true
-                        forgotPasswordMessage = ""
-                        coroutineScope.launch {
-                            val result = viewModel.sendPasswordResetLink(forgotPasswordInput.trim())
-                            isSendingResetLink = false
-                            forgotPasswordIsSuccess = result.first
-                            forgotPasswordMessage = result.second
+                    }
+                    3 -> {
+                        Button(
+                            onClick = {
+                                if (resetNewPasswordInput.length < 6) {
+                                    resetStatusMessage = "New password must be at least 6 characters."
+                                    resetIsSuccess = false
+                                    return@Button
+                                }
+                                if (resetNewPasswordInput != resetConfirmPasswordInput) {
+                                    resetStatusMessage = "Passwords do not match. Please re-enter."
+                                    resetIsSuccess = false
+                                    return@Button
+                                }
+                                isResetLoading = true
+                                resetStatusMessage = ""
+                                coroutineScope.launch {
+                                    val result = viewModel.completeSecurePasswordReset(resetNewPasswordInput)
+                                    isResetLoading = false
+                                    resetStatusMessage = result.second
+                                    resetIsSuccess = result.first
+                                    if (result.first) {
+                                        loginBackHandleInput = resetIdentifierInput.trim()
+                                        loginPasswordInput = resetNewPasswordInput
+                                        authMode = 0
+                                    }
+                                }
+                            },
+                            enabled = !isResetLoading,
+                            colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                        ) {
+                            if (isResetLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Updating...")
+                            } else {
+                                Text("Save New Password", fontWeight = FontWeight.Bold)
+                            }
                         }
-                    },
-                    enabled = !isSendingResetLink,
-                    colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
-                ) {
-                    if (isSendingResetLink) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Sending...")
-                    } else {
-                        Text("Send Reset Link", fontWeight = FontWeight.Bold)
                     }
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = { showForgotPasswordDialog = false },
-                    enabled = !isSendingResetLink
+                    enabled = !isResetLoading
                 ) {
-                    Text("Close")
+                    Text(if (resetIsSuccess && resetStep == 3) "Done" else "Close")
                 }
             }
         )

@@ -14,13 +14,24 @@ import kotlinx.coroutines.tasks.await
 class FirestoreService {
     private val TAG = "FirestoreService"
 
-    // Safe lazy access to FirebaseFirestore instance
+    // Safe access to FirebaseFirestore instance with configured settings
     private val firestore: FirebaseFirestore? by lazy {
         try {
-            FirebaseFirestore.getInstance()
+            val app = com.google.firebase.FirebaseApp.getInstance()
+            val db = FirebaseFirestore.getInstance(app)
+            val settings = com.google.firebase.firestore.FirebaseFirestoreSettings.Builder()
+                .setPersistenceEnabled(true)
+                .build()
+            db.firestoreSettings = settings
+            db
         } catch (e: Exception) {
-            Log.e(TAG, "Firestore initialization error (app check or google services config missing): ${e.message}")
-            null
+            Log.w(TAG, "Firestore initialization note: ${e.message}")
+            try {
+                FirebaseFirestore.getInstance()
+            } catch (ex: Exception) {
+                Log.e(TAG, "Firestore unavailable: ${ex.message}")
+                null
+            }
         }
     }
 

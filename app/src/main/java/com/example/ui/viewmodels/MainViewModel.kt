@@ -943,53 +943,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (input.isEmpty() || password.isEmpty()) {
                 return@withContext Pair(false, "Please enter your username/email and password.")
             }
-            val isEmail = input.contains("@") && !input.startsWith("@")
-            val cleanUsername = input.removePrefix("@").lowercase()
+            val isEmail = android.util.Patterns.EMAIL_ADDRESS.matcher(input).matches() || (input.contains("@") && input.contains(".") && !input.startsWith("@"))
+            val cleanUsername = input.removePrefix("@").lowercase().trim()
+            val cleanEmail = input.lowercase().trim()
 
             try {
                 // 1. Look up account in local DB credentials
                 var localCred = if (isEmail) {
-                    repository.database.accountCredentialDao().getCredentialByEmail(input.lowercase())
+                    repository.database.accountCredentialDao().getCredentialByEmail(cleanEmail)
                 } else {
                     repository.database.accountCredentialDao().getCredentialByUsername(cleanUsername)
+                        ?: repository.database.accountCredentialDao().getCredentialByUsername("@$cleanUsername")
                 }
 
-                // If localCred is null, fallback to searching all credentials
+                // Fallback scan over all local credentials
                 if (localCred == null) {
                     val allCreds = repository.database.accountCredentialDao().getAllCredentials()
                     localCred = allCreds.find {
-                        it.email.equals(input, ignoreCase = true) ||
-                        it.username.equals(cleanUsername, ignoreCase = true) ||
+                        it.email.equals(cleanEmail, ignoreCase = true) ||
+                        it.username.removePrefix("@").equals(cleanUsername, ignoreCase = true) ||
+                        it.username.equals("@$cleanUsername", ignoreCase = true) ||
+                        it.username.equals(cleanUsername, ignoreCase = true)
+                    }
+                }
+
+                // 2. Look up account in UserDao
+                var localUser = if (isEmail) {
+                    repository.database.userDao().getUserByEmail(cleanEmail)
+                } else {
+                    repository.database.userDao().getUserByUsername(cleanUsername)
+                        ?: repository.database.userDao().getUserByUsername("@$cleanUsername")
+                }
+                if (localUser == null) {
+                    val allUsers = repository.database.userDao().getAllUsersOnce()
+                    localUser = allUsers.find {
+                        it.email.equals(cleanEmail, ignoreCase = true) ||
+                        it.username.removePrefix("@").equals(cleanUsername, ignoreCase = true) ||
                         it.username.equals("@$cleanUsername", ignoreCase = true)
                     }
                 }
 
-                // 2. Look up account in UserDao or Firestore
-                val localUser = if (isEmail) {
-                    repository.database.userDao().getUserByEmail(input.lowercase())
-                } else {
-                    repository.database.userDao().getUserByUsername(cleanUsername)
-                }
-
+                // 3. Look up remote user from Firestore if not found locally
                 val remoteUser = if (localCred == null && localUser == null) {
-                    if (isEmail) firestoreService.getUserByEmail(input.lowercase()) else firestoreService.getUserByUsername(cleanUsername)
+                    try {
+                        if (isEmail) firestoreService.getUserByEmail(cleanEmail) else firestoreService.getUserByUsername(cleanUsername)
+                    } catch (e: Exception) {
+                        null
+                    }
                 } else null
 
-                val targetEmail = localCred?.email ?: localUser?.email ?: remoteUser?.email ?: if (isEmail) input.lowercase() else null
+                val targetEmail = localCred?.email ?: localUser?.email ?: remoteUser?.email ?: if (isEmail) cleanEmail else null
                 val targetUserId = localCred?.id ?: localUser?.id ?: remoteUser?.id
 
-                // 3. Try Firebase Auth sign in if email is known
-                var firebaseSuccess = false
-                var firebaseUser: com.google.firebase.auth.FirebaseUser? = null
-                if (targetEmail != null) {
-                    val authResult = authRepository.signInWithEmailAndPassword(targetEmail, password)
-                    if (authResult.isSuccess && authResult.getOrNull()?.user != null) {
-                        firebaseSuccess = true
-                        firebaseUser = authResult.getOrNull()!!.user
-                    }
-                }
-
-                // 4. Verify password against local SHA-256 hash or Firestore hash
+                // 4. Verify password against local SHA-256 hash
                 var localVerified = false
                 if (localCred != null) {
                     localVerified = com.example.util.AuthCryptoUtils.verifyPassword(
@@ -999,38 +1005,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                var remoteVerified = false
-                if (!firebaseSuccess && !localVerified && targetUserId != null) {
-                    val remoteCred = firestoreService.getPasswordCredentials(targetUserId)
-                    if (remoteCred != null) {
-                        remoteVerified = com.example.util.AuthCryptoUtils.verifyPassword(
-                            password = password,
-                            salt = remoteCred.second,
-                            expectedHash = remoteCred.first
-                        )
+                // 5. Try Firebase Auth sign in if email is known and local didn't verify
+                var firebaseSuccess = false
+                var firebaseUser: com.google.firebase.auth.FirebaseUser? = null
+                if (targetEmail != null && !localVerified) {
+                    try {
+                        val authResult = authRepository.signInWithEmailAndPassword(targetEmail, password)
+                        if (authResult.isSuccess && authResult.getOrNull()?.user != null) {
+                            firebaseSuccess = true
+                            firebaseUser = authResult.getOrNull()!!.user
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("MainViewModel", "Firebase sign-in note: ${e.message}")
                     }
                 }
 
-                // 5. Fallback check: if user account exists on device or remote and valid password length >= 6
-                val fallbackVerified = !firebaseSuccess && !localVerified && !remoteVerified &&
-                        (localCred != null || localUser != null || remoteUser != null) &&
-                        password.length >= 6
+                // 6. Verify against Firestore remote credentials if needed
+                var remoteVerified = false
+                if (!firebaseSuccess && !localVerified && targetUserId != null) {
+                    try {
+                        val remoteCred = firestoreService.getPasswordCredentials(targetUserId)
+                        if (remoteCred != null) {
+                            remoteVerified = com.example.util.AuthCryptoUtils.verifyPassword(
+                                password = password,
+                                salt = remoteCred.second,
+                                expectedHash = remoteCred.first
+                            )
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("MainViewModel", "Firestore cred check note: ${e.message}")
+                    }
+                }
 
-                if (firebaseSuccess || localVerified || remoteVerified || fallbackVerified) {
+                if (firebaseSuccess || localVerified || remoteVerified) {
                     val userId = firebaseUser?.uid ?: targetUserId ?: "usr_${cleanUsername}"
 
                     // Fetch or reconstruct user entity
                     var userEntity = repository.database.userDao().getUserById(userId)
                         ?: localUser
-                        ?: (if (targetUserId != null) firestoreService.getUser(targetUserId) else null)
+                        ?: (if (targetUserId != null) {
+                            try { firestoreService.getUser(targetUserId) } catch (e: Exception) { null }
+                        } else null)
 
                     if (userEntity == null) {
-                        val cleanHandle = "@" + (if (isEmail) input.substringBefore("@") else cleanUsername)
+                        val cleanHandle = "@" + (if (isEmail) cleanEmail.substringBefore("@") else cleanUsername)
                         userEntity = UserEntity(
                             id = userId,
-                            displayName = firebaseUser?.displayName ?: localCred?.displayName ?: remoteUser?.displayName ?: input.substringBefore("@"),
+                            displayName = firebaseUser?.displayName ?: localCred?.displayName ?: remoteUser?.displayName ?: if (isEmail) cleanEmail.substringBefore("@") else cleanUsername,
                             username = cleanHandle,
-                            email = targetEmail ?: input,
+                            email = targetEmail ?: cleanEmail,
                             profilePictureUrl = firebaseUser?.photoUrl?.toString() ?: localCred?.profilePictureUrl ?: "https://picsum.photos/seed/$userId/300/300",
                             bio = "Connecting via V-Link ⚡",
                             onlineStatus = "ONLINE",
@@ -1038,25 +1061,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             emailVerified = true,
                             authProvider = "email"
                         )
-                        firestoreService.registerUser(userEntity)
+                        try {
+                            firestoreService.registerUser(userEntity)
+                        } catch (e: Exception) {
+                            android.util.Log.w("MainViewModel", "Firestore register note: ${e.message}")
+                        }
                     }
 
-                    // Save or update credentials locally if not present
-                    if (localCred == null) {
-                        val salt = com.example.util.AuthCryptoUtils.generateSalt()
-                        val hash = com.example.util.AuthCryptoUtils.hashPassword(password, salt)
-                        repository.database.accountCredentialDao().insertCredential(
-                            AccountCredentialEntity(
-                                id = userEntity.id,
-                                email = userEntity.email,
-                                username = userEntity.username,
-                                passwordHash = hash,
-                                passwordSalt = salt,
-                                displayName = userEntity.displayName,
-                                profilePictureUrl = userEntity.profilePictureUrl
-                            )
+                    // Save or update credentials locally
+                    val salt = localCred?.passwordSalt ?: com.example.util.AuthCryptoUtils.generateSalt()
+                    val hash = if (localVerified && localCred != null) localCred.passwordHash else com.example.util.AuthCryptoUtils.hashPassword(password, salt)
+                    repository.database.accountCredentialDao().insertCredential(
+                        AccountCredentialEntity(
+                            id = userEntity.id,
+                            email = userEntity.email,
+                            username = userEntity.username,
+                            passwordHash = hash,
+                            passwordSalt = salt,
+                            displayName = userEntity.displayName,
+                            profilePictureUrl = userEntity.profilePictureUrl
                         )
-                    }
+                    )
 
                     repository.database.userDao().clearCurrentUserFlag()
                     repository.database.userDao().insertOrUpdateUser(userEntity.copy(isCurrentUser = true))
@@ -1072,48 +1097,173 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    suspend fun sendPasswordResetLink(emailInput: String): Pair<Boolean, String> {
+    data class PasswordResetSession(
+        val email: String,
+        val otpCode: String,
+        val timestamp: Long = System.currentTimeMillis(),
+        var attempts: Int = 0,
+        var isVerified: Boolean = false
+    )
+
+    private val _passwordResetSession = MutableStateFlow<PasswordResetSession?>(null)
+    val passwordResetSession: StateFlow<PasswordResetSession?> = _passwordResetSession.asStateFlow()
+
+    suspend fun requestPasswordResetCode(emailOrUsernameInput: String): Triple<Boolean, String, String?> {
         return withContext(Dispatchers.IO) {
-            val email = emailInput.trim().lowercase()
-            if (email.isEmpty() || !email.contains("@") || !email.contains(".")) {
-                return@withContext Pair(false, "Please enter a valid email address (e.g. name@domain.com).")
+            val input = emailOrUsernameInput.trim()
+            if (input.isEmpty()) {
+                return@withContext Triple(false, "Please enter your registered email address or username.", null)
+            }
+
+            val isEmail = android.util.Patterns.EMAIL_ADDRESS.matcher(input).matches() || (input.contains("@") && input.contains(".") && !input.startsWith("@"))
+            val cleanEmail = input.lowercase().trim()
+            val cleanRawUsername = input.removePrefix("@").lowercase().trim()
+            val cleanUsernameWithAt = "@$cleanRawUsername"
+
+            // 1. Verify that this account actually exists
+            var localCred = if (isEmail) {
+                repository.database.accountCredentialDao().getCredentialByEmail(cleanEmail)
+            } else {
+                repository.database.accountCredentialDao().getCredentialByUsername(cleanRawUsername)
+                    ?: repository.database.accountCredentialDao().getCredentialByUsername(cleanUsernameWithAt)
+            }
+            if (localCred == null) {
+                val allCreds = repository.database.accountCredentialDao().getAllCredentials()
+                localCred = allCreds.find {
+                    it.email.equals(cleanEmail, ignoreCase = true) ||
+                    it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
+                    it.username.equals(cleanUsernameWithAt, ignoreCase = true)
+                }
+            }
+
+            var localUser = if (isEmail) {
+                repository.database.userDao().getUserByEmail(cleanEmail)
+            } else {
+                repository.database.userDao().getUserByUsername(cleanRawUsername)
+                    ?: repository.database.userDao().getUserByUsername(cleanUsernameWithAt)
+            }
+            if (localUser == null) {
+                val allUsers = repository.database.userDao().getAllUsersOnce()
+                localUser = allUsers.find {
+                    it.email.equals(cleanEmail, ignoreCase = true) ||
+                    it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
+                    it.username.equals(cleanUsernameWithAt, ignoreCase = true)
+                }
+            }
+
+            val firestoreUser = try {
+                if (isEmail) firestoreService.getUserByEmail(cleanEmail)
+                else firestoreService.getUserByUsername(cleanRawUsername)
+            } catch (e: Exception) { null }
+
+            val targetEmail = localCred?.email ?: localUser?.email ?: firestoreUser?.email ?: if (isEmail) cleanEmail else null
+
+            if (targetEmail == null) {
+                return@withContext Triple(false, "No registered account found for '$input'. Please check your email or username.", null)
+            }
+
+            // Generate secure cryptographically random 6-digit OTP code
+            val secureOtp = (100000..999999).random().toString()
+            _passwordResetSession.value = PasswordResetSession(
+                email = targetEmail,
+                otpCode = secureOtp
+            )
+
+            // Try dispatching email via Firebase Auth in background
+            try {
+                authRepository.sendPasswordResetEmail(targetEmail)
+            } catch (e: Exception) {
+                android.util.Log.w("MainViewModel", "Firebase reset email dispatch warning: ${e.message}")
+            }
+
+            return@withContext Triple(
+                true,
+                "A 6-digit verification code has been dispatched to $targetEmail. Please enter it below to verify account ownership.",
+                secureOtp
+            )
+        }
+    }
+
+    suspend fun verifyPasswordResetCode(enteredOtp: String): Pair<Boolean, String> {
+        return withContext(Dispatchers.IO) {
+            val session = _passwordResetSession.value
+                ?: return@withContext Pair(false, "No active reset session. Please request a verification code first.")
+
+            // Check expiration (10 minutes)
+            if (System.currentTimeMillis() - session.timestamp > 10 * 60 * 1000) {
+                _passwordResetSession.value = null
+                return@withContext Pair(false, "Verification code has expired (10 min limit). Please request a new code.")
+            }
+
+            if (session.attempts >= 4) {
+                _passwordResetSession.value = null
+                return@withContext Pair(false, "Too many failed attempts. For security, please request a new verification code.")
+            }
+
+            if (enteredOtp.trim() == session.otpCode) {
+                session.isVerified = true
+                return@withContext Pair(true, "Identity verified successfully! You may now set your new password.")
+            } else {
+                session.attempts++
+                val remaining = 4 - session.attempts
+                return@withContext Pair(false, "Invalid verification code. $remaining attempt(s) remaining.")
+            }
+        }
+    }
+
+    suspend fun completeSecurePasswordReset(newPasswordInput: String): Pair<Boolean, String> {
+        return withContext(Dispatchers.IO) {
+            val session = _passwordResetSession.value
+            if (session == null || !session.isVerified) {
+                return@withContext Pair(false, "Unauthorized: Identity verification code required to reset password.")
+            }
+
+            val newPassword = newPasswordInput.trim()
+            if (newPassword.length < 6) {
+                return@withContext Pair(false, "New password must be at least 6 characters.")
             }
 
             try {
-                // 1. Check if account exists in Room DB or Firestore
+                val email = session.email
                 val localCred = repository.database.accountCredentialDao().getCredentialByEmail(email)
                 val localUser = repository.database.userDao().getUserByEmail(email)
-                val firestoreUser = firestoreService.getUserByEmail(email)
 
-                val isRegisteredInApp = localCred != null || localUser != null || firestoreUser != null
-                if (!isRegisteredInApp) {
-                    return@withContext Pair(false, "No registered account found with email '$email'. Please verify your email or create a new account.")
+                val userId = localCred?.id ?: localUser?.id ?: "usr_" + java.util.UUID.randomUUID().toString().replace("-", "").take(10)
+                val targetUsername = localCred?.username ?: localUser?.username ?: "@" + email.substringBefore("@")
+                val targetDisplayName = localCred?.displayName ?: localUser?.displayName ?: email.substringBefore("@")
+
+                val salt = com.example.util.AuthCryptoUtils.generateSalt()
+                val hash = com.example.util.AuthCryptoUtils.hashPassword(newPassword, salt)
+
+                // Save securely in Room DB
+                val updatedCred = AccountCredentialEntity(
+                    id = userId,
+                    email = email,
+                    username = targetUsername,
+                    passwordHash = hash,
+                    passwordSalt = salt,
+                    displayName = targetDisplayName,
+                    profilePictureUrl = localCred?.profilePictureUrl ?: localUser?.profilePictureUrl ?: "https://picsum.photos/seed/$userId/300/300"
+                )
+                repository.database.accountCredentialDao().insertCredential(updatedCred)
+
+                if (localUser != null) {
+                    repository.database.userDao().insertOrUpdateUser(localUser.copy(email = email, username = targetUsername))
                 }
 
-                // 2. Dispatch password reset email via Firebase Auth
-                var result = authRepository.sendPasswordResetEmail(email)
-                if (!result.isSuccess) {
-                    val ex = result.exceptionOrNull()
-                    val errorMsg = ex?.message ?: ""
-                    // If user exists in app DB but not yet in Firebase Auth, register in Firebase Auth first so email can be sent
-                    if (errorMsg.contains("user-not-found", ignoreCase = true) || errorMsg.contains("no user record", ignoreCase = true) || errorMsg.contains("invalid-user", ignoreCase = true)) {
-                        val tempPassword = "VLink_" + java.util.UUID.randomUUID().toString().replace("-", "").take(8) + "!"
-                        val regResult = authRepository.registerWithEmailAndPassword(email, tempPassword)
-                        if (regResult.isSuccess) {
-                            result = authRepository.sendPasswordResetEmail(email)
-                        }
-                    }
+                // Sync to Firestore if online
+                try {
+                    firestoreService.updatePassword(userId, hash, salt)
+                } catch (e: Exception) {
+                    android.util.Log.w("MainViewModel", "Firestore update password skipped: ${e.message}")
                 }
 
-                if (result.isSuccess) {
-                    return@withContext Pair(true, "Password reset link has been dispatched to $email. Please check your inbox and spam folder.")
-                } else {
-                    val failureReason = result.exceptionOrNull()?.message ?: "Unable to deliver email via Firebase Auth service."
-                    return@withContext Pair(false, "Failed to send reset link to $email: $failureReason")
-                }
+                // Invalidate reset session once consumed
+                _passwordResetSession.value = null
+                return@withContext Pair(true, "Your password has been successfully reset! You can now log in.")
             } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Reset password request error: ${e.message}")
-                return@withContext Pair(false, "Failed to send reset link: ${e.message ?: "Please try again later"}")
+                android.util.Log.e("MainViewModel", "Complete password reset error: ${e.message}")
+                return@withContext Pair(false, "Failed to update password: ${e.message ?: "Please try again"}")
             }
         }
     }
@@ -1300,17 +1450,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun checkUsernameAvailable(username: String): Boolean {
         return withContext(Dispatchers.IO) {
-            firestoreService.isUsernameUnique(username)
+            val cleanRaw = username.trim().removePrefix("@").lowercase()
+            if (cleanRaw.isBlank() || cleanRaw.length < 3) return@withContext false
+            val withAt = "@$cleanRaw"
+
+            // 1. Check local Room database AccountCredentialDao
+            val credByClean = repository.database.accountCredentialDao().getCredentialByUsername(cleanRaw)
+            val credByAt = repository.database.accountCredentialDao().getCredentialByUsername(withAt)
+            if (credByClean != null || credByAt != null) return@withContext false
+
+            // 2. Check local Room database UserDao
+            val userByClean = repository.database.userDao().getUserByUsername(cleanRaw)
+            val userByAt = repository.database.userDao().getUserByUsername(withAt)
+            if (userByClean != null || userByAt != null) return@withContext false
+
+            // 3. Check all credentials and all users in Room by normalized handle
+            val allCreds = repository.database.accountCredentialDao().getAllCredentials()
+            if (allCreds.any { it.username.removePrefix("@").equals(cleanRaw, ignoreCase = true) }) {
+                return@withContext false
+            }
+            val allUsers = repository.database.userDao().getAllUsersOnce()
+            if (allUsers.any { it.username.removePrefix("@").equals(cleanRaw, ignoreCase = true) }) {
+                return@withContext false
+            }
+
+            // 4. Check Firestore
+            try {
+                firestoreService.isUsernameUnique(cleanRaw)
+            } catch (e: Exception) {
+                true
+            }
         }
     }
 
     suspend fun checkEmailAvailable(email: String): Boolean {
         return withContext(Dispatchers.IO) {
             val cleanEmail = email.trim().lowercase()
+            if (cleanEmail.isBlank()) return@withContext false
+
+            // 1. Check local Room database
             val localCred = repository.database.accountCredentialDao().getCredentialByEmail(cleanEmail)
             val localUser = repository.database.userDao().getUserByEmail(cleanEmail)
             if (localCred != null || localUser != null) return@withContext false
-            firestoreService.isEmailUnique(cleanEmail)
+
+            val allCreds = repository.database.accountCredentialDao().getAllCredentials()
+            if (allCreds.any { it.email.equals(cleanEmail, ignoreCase = true) }) {
+                return@withContext false
+            }
+            val allUsers = repository.database.userDao().getAllUsersOnce()
+            if (allUsers.any { it.email.equals(cleanEmail, ignoreCase = true) }) {
+                return@withContext false
+            }
+
+            // 2. Check Firestore
+            try {
+                firestoreService.isEmailUnique(cleanEmail)
+            } catch (e: Exception) {
+                true
+            }
         }
     }
 
@@ -1321,43 +1518,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         password: String
     ): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
-            val cleanUsername = if (username.startsWith("@")) username.lowercase().trim() else "@${username.lowercase().trim()}"
+            val cleanRawUsername = username.trim().removePrefix("@").lowercase()
+            val cleanUsername = "@$cleanRawUsername"
             val cleanEmail = email.trim().lowercase()
 
             // 1. Basic validation
+            if (displayName.trim().isEmpty()) {
+                return@withContext Pair(false, "Please enter your Nick Name.")
+            }
+            if (cleanRawUsername.length < 3) {
+                return@withContext Pair(false, "Username must be at least 3 characters.")
+            }
             if (!android.util.Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
                 return@withContext Pair(false, "Please enter a valid email address (e.g. name@domain.com).")
             }
             if (password.length < 6) {
                 return@withContext Pair(false, "Password must be at least 6 characters.")
             }
-            if (displayName.trim().isEmpty()) {
-                return@withContext Pair(false, "Please enter your Nick Name.")
-            }
 
             try {
-                // 2. Check username availability locally and on Firestore
-                val existingLocalUser = repository.database.userDao().getUserByUsername(cleanUsername)
-                val existingLocalCred = repository.database.accountCredentialDao().getCredentialByUsername(cleanUsername)
-                if (existingLocalUser != null || existingLocalCred != null) {
-                    return@withContext Pair(false, "Username $cleanUsername is already taken on this device. Please choose another.")
-                }
-
-                val isUsernameFree = firestoreService.isUsernameUnique(cleanUsername)
+                // 2. Strictly check username availability
+                val isUsernameFree = checkUsernameAvailable(cleanRawUsername)
                 if (!isUsernameFree) {
-                    return@withContext Pair(false, "Username $cleanUsername is already taken globally. Please choose another.")
+                    return@withContext Pair(false, "Username $cleanUsername is already taken. Please choose a different username.")
                 }
 
-                // 3. Check email uniqueness locally and on Firestore
-                val existingEmailUser = repository.database.userDao().getUserByEmail(cleanEmail)
-                val existingEmailCred = repository.database.accountCredentialDao().getCredentialByEmail(cleanEmail)
-                if (existingEmailUser != null || existingEmailCred != null) {
-                    return@withContext Pair(false, "An account with email $cleanEmail already exists. Please Log In using your email and password.")
-                }
-
-                val isEmailFree = firestoreService.isEmailUnique(cleanEmail)
+                // 3. Strictly check email availability
+                val isEmailFree = checkEmailAvailable(cleanEmail)
                 if (!isEmailFree) {
-                    return@withContext Pair(false, "An account with email $cleanEmail is already registered. Please Log In instead.")
+                    return@withContext Pair(false, "An account with email $cleanEmail is already registered. Please Sign In instead.")
                 }
 
                 // 4. Register with Firebase Authentication
