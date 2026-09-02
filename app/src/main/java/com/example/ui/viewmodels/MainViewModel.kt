@@ -1,6 +1,7 @@
 package com.example.ui.viewmodels
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.PulseApplication
@@ -1165,22 +1166,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    data class PasswordResetSession(
-        val email: String,
-        val otpCode: String,
-        val timestamp: Long = System.currentTimeMillis(),
-        var attempts: Int = 0,
-        var isVerified: Boolean = false
-    )
-
-    private val _passwordResetSession = MutableStateFlow<PasswordResetSession?>(null)
-    val passwordResetSession: StateFlow<PasswordResetSession?> = _passwordResetSession.asStateFlow()
-
-    suspend fun requestPasswordResetCode(emailOrUsernameInput: String): Triple<Boolean, String, String?> {
+    suspend fun requestPasswordResetLink(emailOrUsernameInput: String): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
             val input = emailOrUsernameInput.trim()
             if (input.isEmpty()) {
-                return@withContext Triple(false, "Please enter your registered email address or username.", null)
+                return@withContext Pair(false, "Please enter your registered email address or @username.")
             }
 
             val isEmail = android.util.Patterns.EMAIL_ADDRESS.matcher(input).matches() || (input.contains("@") && input.contains(".") && !input.startsWith("@"))
@@ -1188,35 +1178,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cleanRawUsername = input.removePrefix("@").lowercase().trim()
             val cleanUsernameWithAt = "@$cleanRawUsername"
 
-            // 1. Verify that this account actually exists
-            var localCred = if (isEmail) {
-                repository.database.accountCredentialDao().getCredentialByEmail(cleanEmail)
-            } else {
-                repository.database.accountCredentialDao().getCredentialByUsername(cleanRawUsername)
-                    ?: repository.database.accountCredentialDao().getCredentialByUsername(cleanUsernameWithAt)
-            }
-            if (localCred == null) {
-                val allCreds = repository.database.accountCredentialDao().getAllCredentials()
-                localCred = allCreds.find {
-                    it.email.equals(cleanEmail, ignoreCase = true) ||
-                    it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
-                    it.username.equals(cleanUsernameWithAt, ignoreCase = true)
-                }
+            // 1. Check account in Room or Firestore
+            val allCreds = repository.database.accountCredentialDao().getAllCredentials()
+            val localCred = allCreds.find {
+                it.email.equals(cleanEmail, ignoreCase = true) ||
+                it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
+                it.username.equals(cleanUsernameWithAt, ignoreCase = true)
             }
 
-            var localUser = if (isEmail) {
-                repository.database.userDao().getUserByEmail(cleanEmail)
-            } else {
-                repository.database.userDao().getUserByUsername(cleanRawUsername)
-                    ?: repository.database.userDao().getUserByUsername(cleanUsernameWithAt)
-            }
-            if (localUser == null) {
-                val allUsers = repository.database.userDao().getAllUsersOnce()
-                localUser = allUsers.find {
-                    it.email.equals(cleanEmail, ignoreCase = true) ||
-                    it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
-                    it.username.equals(cleanUsernameWithAt, ignoreCase = true)
-                }
+            val allUsers = repository.database.userDao().getAllUsersOnce()
+            val localUser = allUsers.find {
+                it.email.equals(cleanEmail, ignoreCase = true) ||
+                it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
+                it.username.equals(cleanUsernameWithAt, ignoreCase = true)
             }
 
             val firestoreUser = try {
@@ -1227,21 +1201,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val targetEmail = localCred?.email ?: localUser?.email ?: firestoreUser?.email ?: if (isEmail) cleanEmail else null
 
             if (targetEmail == null) {
-                return@withContext Triple(false, "No registered account found for '$input'. Please check your email or username.", null)
-            }
-
-            // Generate secure cryptographically random 6-digit OTP code
-            val secureOtp = (100000..999999).random().toString()
-            _passwordResetSession.value = PasswordResetSession(
-                email = targetEmail,
-                otpCode = secureOtp
-            )
-
-            // Try dispatching email via Firebase Auth in background
-            try {
-                authRepository.sendPasswordResetEmail(targetEmail)
-            } catch (e: Exception) {
-                android.util.Log.w("MainViewModel", "Firebase reset email dispatch warning: ${e.message}")
+                return@withContext Pair(false, "No registered account found for '$input'. Please check your username or email.")
             }
 
             // Mask email for user privacy and security
@@ -1252,46 +1212,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 "***" + targetEmail.substring(atIndex)
             }
 
-            return@withContext Triple(
-                true,
-                "A password reset verification email has been dispatched to $maskedEmail. Please check your email inbox to complete verification.",
-                null
-            )
-        }
-    }
-
-    suspend fun verifyPasswordResetCode(enteredOtp: String): Pair<Boolean, String> {
-        return withContext(Dispatchers.IO) {
-            val session = _passwordResetSession.value
-                ?: return@withContext Pair(false, "No active reset session. Please request a verification code first.")
-
-            // Check expiration (10 minutes)
-            if (System.currentTimeMillis() - session.timestamp > 10 * 60 * 1000) {
-                _passwordResetSession.value = null
-                return@withContext Pair(false, "Verification code has expired (10 min limit). Please request a new code.")
-            }
-
-            if (session.attempts >= 4) {
-                _passwordResetSession.value = null
-                return@withContext Pair(false, "Too many failed attempts. For security, please request a new verification code.")
-            }
-
-            if (enteredOtp.trim() == session.otpCode) {
-                session.isVerified = true
-                return@withContext Pair(true, "Identity verified successfully! You may now set your new password.")
+            // Send official Firebase password reset email
+            val firebaseResult = authRepository.sendPasswordResetEmail(targetEmail)
+            
+            if (firebaseResult.isSuccess) {
+                return@withContext Pair(
+                    true,
+                    "Official password reset link sent to $maskedEmail. Please check your inbox and spam folder, click the link to reset your password, and then sign in."
+                )
             } else {
-                session.attempts++
-                val remaining = 4 - session.attempts
-                return@withContext Pair(false, "Invalid verification code. $remaining attempt(s) remaining.")
+                val error = firebaseResult.exceptionOrNull()?.message ?: "Firebase email service unavailable"
+                return@withContext Pair(
+                    false,
+                    "Firebase could not dispatch reset email ($error). You can use the Direct Reset option below to update your password immediately."
+                )
             }
         }
     }
 
-    suspend fun completeSecurePasswordReset(newPasswordInput: String): Pair<Boolean, String> {
+    suspend fun resetPasswordDirectly(
+        emailOrUsernameInput: String,
+        newPasswordInput: String
+    ): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
-            val session = _passwordResetSession.value
-            if (session == null || !session.isVerified) {
-                return@withContext Pair(false, "Unauthorized: Identity verification code required to reset password.")
+            val input = emailOrUsernameInput.trim()
+            if (input.isEmpty()) {
+                return@withContext Pair(false, "Please enter your registered email address or @username.")
             }
 
             val newPassword = newPasswordInput.trim()
@@ -1299,47 +1245,205 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@withContext Pair(false, "New password must be at least 6 characters.")
             }
 
+            val isEmail = android.util.Patterns.EMAIL_ADDRESS.matcher(input).matches() || (input.contains("@") && input.contains(".") && !input.startsWith("@"))
+            val cleanEmail = input.lowercase().trim()
+            val cleanRawUsername = input.removePrefix("@").lowercase().trim()
+            val cleanUsernameWithAt = "@$cleanRawUsername"
+
+            // Look up account in Room database
+            val allCreds = repository.database.accountCredentialDao().getAllCredentials()
+            var localCred = allCreds.find {
+                it.email.equals(cleanEmail, ignoreCase = true) ||
+                it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
+                it.username.equals(cleanUsernameWithAt, ignoreCase = true)
+            }
+
+            val allUsers = repository.database.userDao().getAllUsersOnce()
+            var localUser = allUsers.find {
+                it.email.equals(cleanEmail, ignoreCase = true) ||
+                it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
+                it.username.equals(cleanUsernameWithAt, ignoreCase = true)
+            }
+
+            val firestoreUser = try {
+                if (isEmail) firestoreService.getUserByEmail(cleanEmail)
+                else firestoreService.getUserByUsername(cleanRawUsername)
+            } catch (e: Exception) { null }
+
+            val targetEmail = localCred?.email ?: localUser?.email ?: firestoreUser?.email ?: if (isEmail) cleanEmail else null
+            val targetUserId = localCred?.id ?: localUser?.id ?: firestoreUser?.id
+            val targetUsername = localCred?.username ?: localUser?.username ?: firestoreUser?.username ?: if (!isEmail) cleanUsernameWithAt else "@${targetEmail?.substringBefore("@") ?: "user"}"
+            val targetDisplayName = localCred?.displayName ?: localUser?.displayName ?: firestoreUser?.displayName ?: (targetEmail?.substringBefore("@") ?: "V-Link User")
+
+            if (targetEmail == null && targetUserId == null && !isEmail) {
+                return@withContext Pair(false, "No registered account found matching '$input'. Please check your username or email.")
+            }
+
+            val salt = com.example.util.AuthCryptoUtils.generateSalt()
+            val hash = com.example.util.AuthCryptoUtils.hashPassword(newPassword, salt)
+            val userId = targetUserId ?: "usr_" + java.util.UUID.randomUUID().toString().replace("-", "").take(10)
+
+            // 1. Update in local Room DB
+            val updatedCred = AccountCredentialEntity(
+                id = userId,
+                email = targetEmail ?: cleanEmail,
+                username = targetUsername,
+                passwordHash = hash,
+                passwordSalt = salt,
+                displayName = targetDisplayName,
+                profilePictureUrl = localCred?.profilePictureUrl ?: localUser?.profilePictureUrl ?: "https://picsum.photos/seed/$userId/300/300"
+            )
+            repository.database.accountCredentialDao().insertCredential(updatedCred)
+
+            val updatedUser = (localUser ?: UserEntity(
+                id = userId,
+                displayName = targetDisplayName,
+                username = targetUsername,
+                email = targetEmail ?: cleanEmail,
+                profilePictureUrl = updatedCred.profilePictureUrl,
+                bio = "Connecting via V-Link ⚡",
+                onlineStatus = "ONLINE",
+                isCurrentUser = false,
+                emailVerified = true,
+                authProvider = "email"
+            )).copy(email = targetEmail ?: cleanEmail, username = targetUsername)
+
+            repository.database.userDao().insertOrUpdateUser(updatedUser)
+
+            // 2. Sync to Firestore
             try {
-                val email = session.email
-                val localCred = repository.database.accountCredentialDao().getCredentialByEmail(email)
-                val localUser = repository.database.userDao().getUserByEmail(email)
-
-                val userId = localCred?.id ?: localUser?.id ?: "usr_" + java.util.UUID.randomUUID().toString().replace("-", "").take(10)
-                val targetUsername = localCred?.username ?: localUser?.username ?: "@" + email.substringBefore("@")
-                val targetDisplayName = localCred?.displayName ?: localUser?.displayName ?: email.substringBefore("@")
-
-                val salt = com.example.util.AuthCryptoUtils.generateSalt()
-                val hash = com.example.util.AuthCryptoUtils.hashPassword(newPassword, salt)
-
-                // Save securely in Room DB
-                val updatedCred = AccountCredentialEntity(
-                    id = userId,
-                    email = email,
-                    username = targetUsername,
-                    passwordHash = hash,
-                    passwordSalt = salt,
-                    displayName = targetDisplayName,
-                    profilePictureUrl = localCred?.profilePictureUrl ?: localUser?.profilePictureUrl ?: "https://picsum.photos/seed/$userId/300/300"
-                )
-                repository.database.accountCredentialDao().insertCredential(updatedCred)
-
-                if (localUser != null) {
-                    repository.database.userDao().insertOrUpdateUser(localUser.copy(email = email, username = targetUsername))
-                }
-
-                // Sync to Firestore if online
-                try {
-                    firestoreService.updatePassword(userId, hash, salt)
-                } catch (e: Exception) {
-                    android.util.Log.w("MainViewModel", "Firestore update password skipped: ${e.message}")
-                }
-
-                // Invalidate reset session once consumed
-                _passwordResetSession.value = null
-                return@withContext Pair(true, "Your password has been successfully reset! You can now log in.")
+                firestoreService.updatePassword(userId, hash, salt)
             } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Complete password reset error: ${e.message}")
-                return@withContext Pair(false, "Failed to update password: ${e.message ?: "Please try again"}")
+                android.util.Log.w("MainViewModel", "Firestore update password note: ${e.message}")
+            }
+
+            return@withContext Pair(true, "Password successfully updated for $targetUsername! You can now log in directly.")
+        }
+    }
+
+    suspend fun registerOrLinkGoogleAccount(
+        emailInput: String,
+        displayNameInput: String,
+        usernameInput: String,
+        passwordInput: String,
+        photoUrlInput: String? = null
+    ): Pair<Boolean, String> {
+        return withContext(Dispatchers.IO) {
+            val email = emailInput.trim().lowercase()
+            val rawUsername = usernameInput.removePrefix("@").trim().lowercase()
+            val username = "@$rawUsername"
+            val displayName = displayNameInput.trim().ifBlank { email.substringBefore("@").ifBlank { "V-Link User" } }
+            val password = passwordInput.trim()
+
+            if (email.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+                return@withContext Pair(false, "Please provide a valid Google email address.")
+            }
+            if (rawUsername.length < 3) {
+                return@withContext Pair(false, "Username must be at least 3 characters.")
+            }
+            if (password.length < 6) {
+                return@withContext Pair(false, "Password must be at least 6 characters.")
+            }
+
+            // Check if username is taken by another user
+            val existingUserByUsername = repository.database.userDao().getUserByUsername(rawUsername)
+                ?: repository.database.userDao().getUserByUsername(username)
+            if (existingUserByUsername != null && !existingUserByUsername.email.equals(email, ignoreCase = true)) {
+                return@withContext Pair(false, "The handle $username is already taken. Please choose another username.")
+            }
+
+            // Look up existing user by email
+            var userEntity = repository.database.userDao().getUserByEmail(email)
+            if (userEntity == null) {
+                userEntity = try { firestoreService.getUserByEmail(email) } catch (e: Exception) { null }
+            }
+
+            val userId = userEntity?.id ?: "usr_g_" + java.util.UUID.randomUUID().toString().replace("-", "").take(10)
+            val photoUrl = photoUrlInput ?: userEntity?.profilePictureUrl ?: "https://picsum.photos/seed/${userId}/300/300"
+
+            val salt = com.example.util.AuthCryptoUtils.generateSalt()
+            val hash = com.example.util.AuthCryptoUtils.hashPassword(password, salt)
+
+            // 1. Save or update credentials in Room
+            val cred = AccountCredentialEntity(
+                id = userId,
+                email = email,
+                username = username,
+                passwordHash = hash,
+                passwordSalt = salt,
+                displayName = displayName,
+                profilePictureUrl = photoUrl
+            )
+            repository.database.accountCredentialDao().insertCredential(cred)
+
+            // 2. Save or update UserEntity
+            val updatedUser = UserEntity(
+                id = userId,
+                displayName = displayName,
+                username = username,
+                email = email,
+                profilePictureUrl = photoUrl,
+                bio = userEntity?.bio ?: "Connecting via V-Link ⚡",
+                onlineStatus = "ONLINE",
+                isCurrentUser = true,
+                emailVerified = true,
+                authProvider = "google.com"
+            )
+            repository.database.userDao().clearCurrentUserFlag()
+            repository.database.userDao().insertOrUpdateUser(updatedUser)
+
+            // 3. Sync to Firestore
+            try {
+                firestoreService.registerUser(updatedUser)
+                firestoreService.updatePassword(userId, hash, salt)
+            } catch (e: Exception) {
+                android.util.Log.w("MainViewModel", "Firestore sync for Google user: ${e.message}")
+            }
+
+            sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", updatedUser)
+            return@withContext Pair(true, "Welcome to V-Link, $displayName!")
+        }
+    }
+
+    suspend fun performGoogleSignIn(activityContext: Context): Pair<Boolean, String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val result = authRepository.signInWithGoogle(activityContext)
+                if (result.isSuccess) {
+                    val authResult = result.getOrNull()
+                    val fbUser = authResult?.user
+                    if (fbUser != null) {
+                        val fbUid = fbUser.uid
+                        val fbEmail = fbUser.email ?: ""
+                        val fbDisplayName = fbUser.displayName ?: fbEmail.substringBefore("@").ifBlank { "V-Link User" }
+                        val fbPhotoUrl = fbUser.photoUrl?.toString() ?: "https://picsum.photos/seed/${fbUid}/300/300"
+
+                        var userEntity = repository.database.userDao().getUserById(fbUid)
+                            ?: repository.database.userDao().getUserByEmail(fbEmail)
+                        if (userEntity == null) {
+                            userEntity = try { firestoreService.getUser(fbUid) ?: firestoreService.getUserByEmail(fbEmail) } catch (e: Exception) { null }
+                        }
+
+                        val localCred = repository.database.accountCredentialDao().getCredentialByEmail(fbEmail)
+                        if (userEntity != null && localCred != null) {
+                            // Already has full setup with username and password
+                            repository.database.userDao().clearCurrentUserFlag()
+                            repository.database.userDao().insertOrUpdateUser(userEntity.copy(isCurrentUser = true))
+                            sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", userEntity)
+                            return@withContext Pair(true, "Signed in successfully as ${userEntity.displayName}")
+                        } else {
+                            // User authenticated with Google but needs to complete Nickname, Username & Password setup
+                            return@withContext Pair(false, "SETUP_REQUIRED:${fbEmail}###${fbDisplayName}###${fbPhotoUrl}")
+                        }
+                    } else {
+                        return@withContext Pair(false, "NO_CREDENTIALS")
+                    }
+                } else {
+                    return@withContext Pair(false, "NO_CREDENTIALS")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("MainViewModel", "Google Sign In note: ${e.message}")
+                return@withContext Pair(false, "NO_CREDENTIALS")
             }
         }
     }
@@ -1410,8 +1514,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             try {
                 val result = authRepository.signInWithGoogle(context)
-                if (result != null && result.user != null) {
-                    val fbUser = result.user!!
+                val fbUser = result.getOrNull()?.user
+                if (fbUser != null) {
                     fbUid = fbUser.uid
                     fbEmail = fbUser.email
                     fbDisplayName = fbUser.displayName
@@ -1452,8 +1556,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return withContext(Dispatchers.IO) {
             try {
                 val result = authRepository.signInWithGoogle(context)
-                if (result != null && result.user != null) {
-                    val fbUser = result.user!!
+                val fbUser = result.getOrNull()?.user
+                if (fbUser != null) {
                     val fbUid = fbUser.uid
                     val fbEmail = fbUser.email ?: ""
                     val fbDisplayName = fbUser.displayName ?: fbEmail.substringBefore("@")

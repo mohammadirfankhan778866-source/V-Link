@@ -57,15 +57,28 @@ class AuthRepository(private val context: Context) {
     suspend fun sendPasswordResetEmail(email: String): Result<Unit> {
         val fbAuth = auth ?: return Result.failure(Exception("Firebase Authentication is not available"))
         return try {
-            fbAuth.sendPasswordResetEmail(email).await()
+            fbAuth.sendPasswordResetEmail(email.trim()).await()
             Result.success(Unit)
+        } catch (e: com.google.firebase.auth.FirebaseAuthInvalidUserException) {
+            Log.w("AuthRepository", "No Firebase user found for email: $email")
+            Result.failure(Exception("No account found with email '$email' in authentication records."))
+        } catch (e: com.google.firebase.auth.FirebaseAuthInvalidCredentialsException) {
+            Log.w("AuthRepository", "Invalid email format: $email")
+            Result.failure(Exception("The email address is improperly formatted."))
+        } catch (e: com.google.firebase.FirebaseTooManyRequestsException) {
+            Log.w("AuthRepository", "Too many reset requests for email: $email")
+            Result.failure(Exception("Too many reset attempts. Please wait a few moments and try again."))
+        } catch (e: com.google.firebase.FirebaseNetworkException) {
+            Log.w("AuthRepository", "Network error sending reset email: ${e.message}")
+            Result.failure(Exception("Network error. Please check your internet connection."))
         } catch (e: Exception) {
             Log.e("AuthRepository", "Error sending password reset email: ${e.message}")
             Result.failure(e)
         }
     }
 
-    suspend fun signInWithGoogle(activityContext: Context): AuthResult? {
+    suspend fun signInWithGoogle(activityContext: Context): Result<AuthResult> {
+        val fbAuth = auth ?: return Result.failure(Exception("Firebase Authentication is not available"))
         return try {
             val hashedNonce = UUID.randomUUID().toString().let {
                 val md = MessageDigest.getInstance("SHA-256")
@@ -74,10 +87,12 @@ class AuthRepository(private val context: Context) {
                 digest.joinToString("") { byte -> "%02x".format(byte) }
             }
 
-            // Client ID usually from strings.xml or hardcoded for testing
-            // Using a dummy one for now if not available, but real one is needed for CredentialManager
             val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-            val clientId = if (resId != 0) context.getString(resId) else "dummy_client_id_for_testing"
+            val clientId = if (resId != 0) {
+                try { context.getString(resId) } catch (e: Exception) { "303440318642-bdprd7ggohirjtsf3rf4am36mfo3v3pm.apps.googleusercontent.com" }
+            } else {
+                "303440318642-bdprd7ggohirjtsf3rf4am36mfo3v3pm.apps.googleusercontent.com"
+            }
 
             val googleIdOption: GetGoogleIdOption = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(false)
@@ -95,20 +110,20 @@ class AuthRepository(private val context: Context) {
             )
 
             val credential = result.credential
-            val fbAuth = auth ?: return null
             if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                 val authCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
-                fbAuth.signInWithCredential(authCredential).await()
+                val authResult = fbAuth.signInWithCredential(authCredential).await()
+                Result.success(authResult)
             } else {
-                null
+                Result.failure(Exception("Unsupported credential type received from Google."))
             }
         } catch (e: GetCredentialException) {
-            Log.w("AuthRepository", "Google Sign In Failed (Expected in Virtual Preview): ${e.message}")
-            null
+            Log.w("AuthRepository", "Google Sign In Exception: ${e.message}")
+            Result.failure(e)
         } catch (e: Exception) {
-            Log.w("AuthRepository", "Google Sign In Failed (Expected in Virtual Preview): ${e.message}")
-            null
+            Log.w("AuthRepository", "Google Sign In Exception: ${e.message}")
+            Result.failure(e)
         }
     }
 

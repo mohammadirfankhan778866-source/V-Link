@@ -45,6 +45,7 @@ fun AuthScreen(
     onGoogleSignIn: (email: String, displayName: String, avatarUrl: String) -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     var authMode by remember { mutableStateOf(0) } // 0 = Log In, 1 = Create Account
     var isSubmitting by remember { mutableStateOf(false) }
@@ -67,9 +68,8 @@ fun AuthScreen(
 
     // Secure Forgot Password states
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
-    var resetStep by remember { mutableStateOf(1) } // 1: Account Info, 2: OTP Verification, 3: Set New Password
+    var resetTab by remember { mutableStateOf(0) } // 0 = Email Reset Link, 1 = Direct In-App Reset
     var resetIdentifierInput by remember { mutableStateOf("") }
-    var resetOtpCodeInput by remember { mutableStateOf("") }
     var resetNewPasswordInput by remember { mutableStateOf("") }
     var resetConfirmPasswordInput by remember { mutableStateOf("") }
     var resetNewPasswordVisible by remember { mutableStateOf(false) }
@@ -77,6 +77,20 @@ fun AuthScreen(
     var isResetLoading by remember { mutableStateOf(false) }
     var resetStatusMessage by remember { mutableStateOf("") }
     var resetIsSuccess by remember { mutableStateOf(false) }
+
+    // Google Account Setup Dialog states (Nickname, Username & Direct Login Password)
+    var showGoogleSetupDialog by remember { mutableStateOf(false) }
+    var googleEmailInput by remember { mutableStateOf("mohammadirfankhan778866@gmail.com") }
+    var googleDisplayNameInput by remember { mutableStateOf("") }
+    var googleUsernameInput by remember { mutableStateOf("") }
+    var googlePasswordInput by remember { mutableStateOf("") }
+    var googlePasswordVisible by remember { mutableStateOf(false) }
+    var isGoogleSetupLoading by remember { mutableStateOf(false) }
+    var googleSetupErrorMessage by remember { mutableStateOf("") }
+    var isCheckingGoogleUsername by remember { mutableStateOf(false) }
+    var isGoogleUsernameAvailable by remember { mutableStateOf<Boolean?>(null) }
+    var googleUsernameStatusText by remember { mutableStateOf("") }
+    var googlePhotoUrl by remember { mutableStateOf<String?>(null) }
 
     // Real-time checks: Username
     var isCheckingUsername by remember { mutableStateOf(false) }
@@ -132,6 +146,25 @@ fun AuthScreen(
         isCheckingUsername = false
         isUsernameAvailable = available
         usernameStatusText = if (available) "✅ @$clean is available!" else "❌ @$clean is already registered"
+    }
+
+    // Debounced Google account username availability check
+    LaunchedEffect(googleUsernameInput) {
+        val clean = googleUsernameInput.lowercase().removePrefix("@").trim()
+        if (clean.length < 3) {
+            isGoogleUsernameAvailable = null
+            googleUsernameStatusText = if (clean.isEmpty()) "" else "Handle must be at least 3 characters"
+            return@LaunchedEffect
+        }
+
+        isCheckingGoogleUsername = true
+        googleUsernameStatusText = "Checking handle availability..."
+        delay(350)
+
+        val available = viewModel.checkUsernameAvailable(clean)
+        isCheckingGoogleUsername = false
+        isGoogleUsernameAvailable = available
+        googleUsernameStatusText = if (available) "✅ @$clean is available!" else "❌ @$clean is already registered"
     }
 
     // Debounced registration email availability check
@@ -472,12 +505,11 @@ fun AuthScreen(
                                 TextButton(
                                     onClick = {
                                         resetIdentifierInput = loginBackHandleInput.trim()
-                                        resetOtpCodeInput = ""
                                         resetNewPasswordInput = ""
                                         resetConfirmPasswordInput = ""
                                         resetStatusMessage = ""
                                         resetIsSuccess = false
-                                        resetStep = 1
+                                        resetTab = 0
                                         showForgotPasswordDialog = true
                                     },
                                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
@@ -549,7 +581,7 @@ fun AuthScreen(
                                         return@Button
                                     }
                                     isSubmitting = true
-                                    submitProgressText = "Verifying Firebase authentication..."
+                                    submitProgressText = "Verifying authentication..."
                                     loginBackErrorMessage = ""
                                     coroutineScope.launch {
                                         val result = viewModel.performLoginBack(loginBackHandleInput, loginPasswordInput)
@@ -576,6 +608,85 @@ fun AuthScreen(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text("Log In", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                HorizontalDivider(
+                                    modifier = Modifier.weight(1f),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                )
+                                Text(
+                                    text = "  OR  ",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                HorizontalDivider(
+                                    modifier = Modifier.weight(1f),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    isSubmitting = true
+                                    submitProgressText = "Connecting with Google..."
+                                    loginBackErrorMessage = ""
+                                    coroutineScope.launch {
+                                        val result = viewModel.performGoogleSignIn(context)
+                                        isSubmitting = false
+                                        if (result.first) {
+                                            // Successfully signed in directly
+                                        } else if (result.second.startsWith("SETUP_REQUIRED:")) {
+                                            val parts = result.second.removePrefix("SETUP_REQUIRED:").split("###")
+                                            val email = parts.getOrNull(0) ?: "mohammadirfankhan778866@gmail.com"
+                                            val name = parts.getOrNull(1) ?: email.substringBefore("@")
+                                            val photo = parts.getOrNull(2)
+                                            googleEmailInput = email
+                                            googleDisplayNameInput = name
+                                            googleUsernameInput = name.lowercase().replace(" ", "_").filter { it.isLetterOrDigit() || it == '_' }.ifBlank { email.substringBefore("@") }
+                                            googlePhotoUrl = photo
+                                            googlePasswordInput = ""
+                                            googleSetupErrorMessage = ""
+                                            showGoogleSetupDialog = true
+                                        } else {
+                                            // Open Google Setup dialog with prefilled details
+                                            val inputEmail = if (loginBackHandleInput.contains("@") && !loginBackHandleInput.startsWith("@")) {
+                                                loginBackHandleInput.trim()
+                                            } else "mohammadirfankhan778866@gmail.com"
+                                            googleEmailInput = inputEmail
+                                            googleDisplayNameInput = inputEmail.substringBefore("@").replace(".", " ").replaceFirstChar { it.uppercase() }
+                                            googleUsernameInput = inputEmail.substringBefore("@").lowercase().filter { it.isLetterOrDigit() || it == '_' }
+                                            googlePhotoUrl = null
+                                            googlePasswordInput = ""
+                                            googleSetupErrorMessage = ""
+                                            showGoogleSetupDialog = true
+                                        }
+                                    }
+                                },
+                                enabled = !isSubmitting,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("google_sign_in_login_btn"),
+                                shape = RoundedCornerShape(24.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_google_logo),
+                                    contentDescription = "Google",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Sign in with Google", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                             }
                         }
                     } else {
@@ -967,6 +1078,84 @@ fun AuthScreen(
                                     Text("Create Account", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
                             }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                HorizontalDivider(
+                                    modifier = Modifier.weight(1f),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                )
+                                Text(
+                                    text = "  OR  ",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                HorizontalDivider(
+                                    modifier = Modifier.weight(1f),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    isSubmitting = true
+                                    submitProgressText = "Connecting with Google..."
+                                    registrationErrorMessage = ""
+                                    coroutineScope.launch {
+                                        val result = viewModel.performGoogleSignIn(context)
+                                        isSubmitting = false
+                                        if (result.first) {
+                                            // Signed in directly
+                                        } else if (result.second.startsWith("SETUP_REQUIRED:")) {
+                                            val parts = result.second.removePrefix("SETUP_REQUIRED:").split("###")
+                                            val email = parts.getOrNull(0) ?: if (emailInput.isNotBlank()) emailInput else "mohammadirfankhan778866@gmail.com"
+                                            val name = parts.getOrNull(1) ?: displayNameInput.ifBlank { email.substringBefore("@") }
+                                            val photo = parts.getOrNull(2)
+                                            googleEmailInput = email
+                                            googleDisplayNameInput = name
+                                            googleUsernameInput = if (usernameInput.isNotBlank()) usernameInput.removePrefix("@") else name.lowercase().replace(" ", "_").filter { it.isLetterOrDigit() || it == '_' }.ifBlank { email.substringBefore("@") }
+                                            googlePhotoUrl = photo
+                                            googlePasswordInput = registerPasswordInput
+                                            googleSetupErrorMessage = ""
+                                            showGoogleSetupDialog = true
+                                        } else {
+                                            val email = if (emailInput.isNotBlank()) emailInput.trim() else "mohammadirfankhan778866@gmail.com"
+                                            val name = if (displayNameInput.isNotBlank()) displayNameInput.trim() else email.substringBefore("@").replace(".", " ").replaceFirstChar { it.uppercase() }
+                                            val baseUsername = if (usernameInput.isNotBlank()) usernameInput.trim().removePrefix("@") else email.substringBefore("@").lowercase().filter { it.isLetterOrDigit() || it == '_' }
+                                            googleEmailInput = email
+                                            googleDisplayNameInput = name
+                                            googleUsernameInput = baseUsername
+                                            googlePhotoUrl = null
+                                            googlePasswordInput = registerPasswordInput
+                                            googleSetupErrorMessage = ""
+                                            showGoogleSetupDialog = true
+                                        }
+                                    }
+                                },
+                                enabled = !isSubmitting,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("google_sign_up_btn"),
+                                shape = RoundedCornerShape(24.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_google_logo),
+                                    contentDescription = "Google",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Sign up with Google", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            }
                         }
                     }
 
@@ -982,6 +1171,229 @@ fun AuthScreen(
         }
     }
 
+    // Google Account Setup Dialog (Nickname, Username & Direct Login Password)
+    if (showGoogleSetupDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isGoogleSetupLoading) {
+                    showGoogleSetupDialog = false
+                }
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_google_logo),
+                        contentDescription = "Google",
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Google Account Setup", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Customize your nickname and handle, and create an account password so you can sign in directly anytime.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 16.sp
+                    )
+
+                    // Google Email
+                    OutlinedTextField(
+                        value = googleEmailInput,
+                        onValueChange = { googleEmailInput = it },
+                        label = { Text("Google Email") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
+                        singleLine = true,
+                        enabled = !isGoogleSetupLoading,
+                        modifier = Modifier.fillMaxWidth().testTag("google_setup_email_input")
+                    )
+
+                    // Nickname / Display Name
+                    OutlinedTextField(
+                        value = googleDisplayNameInput,
+                        onValueChange = { googleDisplayNameInput = it },
+                        label = { Text("Nickname (Display Name)") },
+                        placeholder = { Text("e.g. Irfan Khan") },
+                        leadingIcon = { Icon(Icons.Default.Badge, contentDescription = null, tint = VLinkCyan) },
+                        singleLine = true,
+                        enabled = !isGoogleSetupLoading,
+                        modifier = Modifier.fillMaxWidth().testTag("google_setup_nickname_input")
+                    )
+
+                    // Unique @Username
+                    Column {
+                        OutlinedTextField(
+                            value = googleUsernameInput,
+                            onValueChange = { googleUsernameInput = it.removePrefix("@").filter { ch -> ch.isLetterOrDigit() || ch == '_' } },
+                            label = { Text("Unique Handle") },
+                            placeholder = { Text("username") },
+                            prefix = { Text("@", color = VLinkCyan, fontWeight = FontWeight.Bold) },
+                            leadingIcon = { Icon(Icons.Default.AlternateEmail, contentDescription = null, tint = VLinkCyan) },
+                            trailingIcon = {
+                                if (isCheckingGoogleUsername) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = VLinkCyan)
+                                } else if (isGoogleUsernameAvailable != null) {
+                                    Icon(
+                                        imageVector = if (isGoogleUsernameAvailable == true) Icons.Default.CheckCircle else Icons.Default.Cancel,
+                                        contentDescription = null,
+                                        tint = if (isGoogleUsernameAvailable == true) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            },
+                            singleLine = true,
+                            enabled = !isGoogleSetupLoading,
+                            modifier = Modifier.fillMaxWidth().testTag("google_setup_username_input")
+                        )
+                        if (googleUsernameStatusText.isNotEmpty()) {
+                            Text(
+                                text = googleUsernameStatusText,
+                                fontSize = 11.sp,
+                                color = if (isGoogleUsernameAvailable == true) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                            )
+                        }
+                    }
+
+                    // Account Password (for direct email/username & password login)
+                    OutlinedTextField(
+                        value = googlePasswordInput,
+                        onValueChange = { googlePasswordInput = it },
+                        label = { Text("Account Password (min 6 chars)") },
+                        placeholder = { Text("Create password for direct login") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
+                        trailingIcon = {
+                            IconButton(onClick = { googlePasswordVisible = !googlePasswordVisible }) {
+                                Icon(
+                                    imageVector = if (googlePasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        visualTransformation = if (googlePasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        enabled = !isGoogleSetupLoading,
+                        modifier = Modifier.fillMaxWidth().testTag("google_setup_password_input")
+                    )
+
+                    // Informational Box
+                    Surface(
+                        color = VLinkCyan.copy(alpha = 0.08f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Info, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Setting this password enables you to log in anytime directly with your Google email or @handle on the Login screen!",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+
+                    if (googleSetupErrorMessage.isNotEmpty()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = googleSetupErrorMessage,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val email = googleEmailInput.trim()
+                        val nickname = googleDisplayNameInput.trim()
+                        val rawUsername = googleUsernameInput.removePrefix("@").trim()
+                        val password = googlePasswordInput.trim()
+
+                        if (email.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+                            googleSetupErrorMessage = "Please enter a valid Google email address."
+                            return@Button
+                        }
+                        if (nickname.isBlank()) {
+                            googleSetupErrorMessage = "Please enter your Nickname."
+                            return@Button
+                        }
+                        if (rawUsername.length < 3) {
+                            googleSetupErrorMessage = "Username must be at least 3 characters."
+                            return@Button
+                        }
+                        if (password.length < 6) {
+                            googleSetupErrorMessage = "Password must be at least 6 characters."
+                            return@Button
+                        }
+
+                        isGoogleSetupLoading = true
+                        googleSetupErrorMessage = ""
+                        coroutineScope.launch {
+                            val result = viewModel.registerOrLinkGoogleAccount(
+                                emailInput = email,
+                                displayNameInput = nickname,
+                                usernameInput = rawUsername,
+                                passwordInput = password,
+                                photoUrlInput = googlePhotoUrl
+                            )
+                            isGoogleSetupLoading = false
+                            if (result.first) {
+                                showGoogleSetupDialog = false
+                            } else {
+                                googleSetupErrorMessage = result.second
+                            }
+                        }
+                    },
+                    enabled = !isGoogleSetupLoading,
+                    colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                ) {
+                    if (isGoogleSetupLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Creating Account...")
+                    } else {
+                        Text("Save & Sign In", fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showGoogleSetupDialog = false },
+                    enabled = !isGoogleSetupLoading
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     if (showForgotPasswordDialog) {
         AlertDialog(
             onDismissRequest = {
@@ -991,9 +1403,9 @@ fun AuthScreen(
             },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Security, contentDescription = null, tint = VLinkCyan)
+                    Icon(Icons.Default.LockReset, contentDescription = null, tint = VLinkCyan)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Secure Password Reset", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Password Reset", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
             },
             text = {
@@ -1001,185 +1413,63 @@ fun AuthScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Security Step Indicator
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                            .padding(vertical = 8.dp, horizontal = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceAround,
-                        verticalAlignment = Alignment.CenterVertically
+                    // Method Selector Tabs
+                    TabRow(
+                        selectedTabIndex = resetTab,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        contentColor = VLinkCyan,
+                        modifier = Modifier.clip(RoundedCornerShape(12.dp))
                     ) {
-                        // Step 1
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .clip(CircleShape)
-                                    .background(if (resetStep >= 1) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("1", color = if (resetStep >= 1) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Account", fontSize = 11.sp, fontWeight = if (resetStep == 1) FontWeight.Bold else FontWeight.Normal, color = if (resetStep >= 1) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-
-                        // Step 2
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .clip(CircleShape)
-                                    .background(if (resetStep >= 2) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("2", color = if (resetStep >= 2) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Verify Code", fontSize = 11.sp, fontWeight = if (resetStep == 2) FontWeight.Bold else FontWeight.Normal, color = if (resetStep >= 2) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-
-                        // Step 3
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .clip(CircleShape)
-                                    .background(if (resetStep >= 3) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("3", color = if (resetStep >= 3) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("New Password", fontSize = 11.sp, fontWeight = if (resetStep == 3) FontWeight.Bold else FontWeight.Normal, color = if (resetStep >= 3) VLinkCyan else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-
-                    // Step 1: Input Account
-                    if (resetStep == 1) {
-                        Text(
-                            text = "Enter your registered email address or @username. A secure 6-digit one-time verification code will be sent to the registered email to verify ownership.",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 18.sp
-                        )
-
-                        OutlinedTextField(
-                            value = resetIdentifierInput,
-                            onValueChange = {
-                                resetIdentifierInput = it
+                        Tab(
+                            selected = resetTab == 0,
+                            onClick = { 
+                                resetTab = 0 
                                 resetStatusMessage = ""
                             },
-                            label = { Text("Registered Email or @username") },
-                            placeholder = { Text("e.g. name@domain.com or @irfan") },
-                            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
-                            singleLine = true,
-                            enabled = !isResetLoading,
-                            modifier = Modifier.fillMaxWidth().testTag("reset_identifier_input")
+                            text = { Text("Email Reset Link", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                         )
-                    }
-
-                    // Step 2: Input OTP Verification Code
-                    if (resetStep == 2) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.MarkEmailRead, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(22.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Security code dispatched to your registered email. Please check your inbox and enter the 6-digit verification code below.",
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-                        }
-
-                        OutlinedTextField(
-                            value = resetOtpCodeInput,
-                            onValueChange = {
-                                if (it.length <= 6) {
-                                    resetOtpCodeInput = it.filter { char -> char.isDigit() }
-                                    resetStatusMessage = ""
-                                }
+                        Tab(
+                            selected = resetTab == 1,
+                            onClick = { 
+                                resetTab = 1 
+                                resetStatusMessage = ""
                             },
-                            label = { Text("6-Digit Verification Code") },
-                            placeholder = { Text("123456") },
-                            leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, tint = VLinkCyan) },
-                            singleLine = true,
-                            enabled = !isResetLoading,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth().testTag("reset_otp_input")
+                            text = { Text("Direct Reset", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                         )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    resetStep = 1
-                                    resetStatusMessage = ""
-                                },
-                                enabled = !isResetLoading
-                            ) {
-                                Text("Change Email", fontSize = 12.sp)
-                            }
-
-                            TextButton(
-                                onClick = {
-                                    isResetLoading = true
-                                    resetStatusMessage = ""
-                                    coroutineScope.launch {
-                                        val result = viewModel.requestPasswordResetCode(resetIdentifierInput.trim())
-                                        isResetLoading = false
-                                        resetStatusMessage = result.second
-                                        resetIsSuccess = result.first
-                                    }
-                                },
-                                enabled = !isResetLoading
-                            ) {
-                                Text("Resend Email", fontSize = 12.sp, color = VLinkCyan)
-                            }
-                        }
                     }
 
-                    // Step 3: Set New Password (Only after OTP verification)
-                    if (resetStep == 3) {
-                        Surface(
-                            color = Color(0xFF1B5E20).copy(alpha = 0.2f),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(20.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Account Ownership Verified! Please choose a new password.",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color(0xFF4CAF50)
-                                )
-                            }
-                        }
+                    // Account Identifier Input
+                    OutlinedTextField(
+                        value = resetIdentifierInput,
+                        onValueChange = {
+                            resetIdentifierInput = it
+                            resetStatusMessage = ""
+                        },
+                        label = { Text("Registered Email or @username") },
+                        placeholder = { Text("e.g. name@domain.com or @irfan") },
+                        leadingIcon = { Icon(Icons.Default.AccountCircle, contentDescription = null, tint = VLinkCyan) },
+                        singleLine = true,
+                        enabled = !isResetLoading,
+                        modifier = Modifier.fillMaxWidth().testTag("reset_identifier_input")
+                    )
+
+                    if (resetTab == 0) {
+                        Text(
+                            text = "An official password reset link will be sent to the registered email address associated with this account. Check your inbox and spam folder to set your new password.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 17.sp
+                        )
+                    } else {
+                        // Direct Reset Mode
+                        Text(
+                            text = "Set a new password directly for your account. You can immediately log in after updating.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 17.sp
+                        )
 
                         OutlinedTextField(
                             value = resetNewPasswordInput,
@@ -1211,7 +1501,7 @@ fun AuthScreen(
                                 resetStatusMessage = ""
                             },
                             label = { Text("Confirm New Password") },
-                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
+                            leadingIcon = { Icon(Icons.Default.LockClock, contentDescription = null, tint = VLinkCyan) },
                             trailingIcon = {
                                 IconButton(onClick = { resetConfirmPasswordVisible = !resetConfirmPasswordVisible }) {
                                     Icon(
@@ -1228,127 +1518,120 @@ fun AuthScreen(
                         )
                     }
 
-                    // Status / Error message
+                    // Status / Error / Success message
                     if (resetStatusMessage.isNotEmpty()) {
                         Surface(
                             color = if (resetIsSuccess) Color(0xFF1B5E20).copy(alpha = 0.2f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = resetStatusMessage,
-                                color = if (resetIsSuccess) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onErrorContainer,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(10.dp)
-                            )
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (resetIsSuccess) Icons.Default.CheckCircle else Icons.Default.ErrorOutline,
+                                    contentDescription = null,
+                                    tint = if (resetIsSuccess) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = resetStatusMessage,
+                                    color = if (resetIsSuccess) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onErrorContainer,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         }
                     }
                 }
             },
             confirmButton = {
-                when (resetStep) {
-                    1 -> {
-                        Button(
-                            onClick = {
-                                if (resetIdentifierInput.isBlank()) {
-                                    resetStatusMessage = "Please enter your registered email address or @username."
-                                    resetIsSuccess = false
-                                    return@Button
-                                }
-                                isResetLoading = true
-                                resetStatusMessage = ""
-                                coroutineScope.launch {
-                                    val result = viewModel.requestPasswordResetCode(resetIdentifierInput.trim())
-                                    isResetLoading = false
-                                    resetStatusMessage = result.second
-                                    resetIsSuccess = result.first
-                                    if (result.first) {
-                                        resetStep = 2
-                                    }
-                                }
-                            },
-                            enabled = !isResetLoading,
-                            colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
-                        ) {
-                            if (isResetLoading) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Sending Code...")
-                            } else {
-                                Text("Send Verification Code", fontWeight = FontWeight.Bold)
+                if (resetIsSuccess) {
+                    Button(
+                        onClick = {
+                            showForgotPasswordDialog = false
+                            loginBackHandleInput = resetIdentifierInput.trim()
+                            loginPasswordInput = resetNewPasswordInput.trim()
+                            authMode = 0
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                    ) {
+                        Text("Log In Now", fontWeight = FontWeight.Bold)
+                    }
+                } else if (resetTab == 0) {
+                    Button(
+                        onClick = {
+                            if (resetIdentifierInput.isBlank()) {
+                                resetStatusMessage = "Please enter your registered email address or @username."
+                                resetIsSuccess = false
+                                return@Button
                             }
+                            isResetLoading = true
+                            resetStatusMessage = ""
+                            coroutineScope.launch {
+                                val result = viewModel.requestPasswordResetLink(resetIdentifierInput.trim())
+                                isResetLoading = false
+                                resetStatusMessage = result.second
+                                resetIsSuccess = result.first
+                            }
+                        },
+                        enabled = !isResetLoading,
+                        colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                    ) {
+                        if (isResetLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sending Email...")
+                        } else {
+                            Text("Send Reset Email", fontWeight = FontWeight.Bold)
                         }
                     }
-                    2 -> {
-                        Button(
-                            onClick = {
-                                if (resetOtpCodeInput.length != 6) {
-                                    resetStatusMessage = "Please enter the full 6-digit verification code."
-                                    resetIsSuccess = false
-                                    return@Button
-                                }
-                                isResetLoading = true
-                                resetStatusMessage = ""
-                                coroutineScope.launch {
-                                    val result = viewModel.verifyPasswordResetCode(resetOtpCodeInput.trim())
-                                    isResetLoading = false
-                                    resetStatusMessage = result.second
-                                    resetIsSuccess = result.first
-                                    if (result.first) {
-                                        resetStep = 3
-                                    }
-                                }
-                            },
-                            enabled = !isResetLoading && resetOtpCodeInput.length == 6,
-                            colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
-                        ) {
-                            if (isResetLoading) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Verifying...")
-                            } else {
-                                Text("Verify Security Code", fontWeight = FontWeight.Bold)
+                } else {
+                    Button(
+                        onClick = {
+                            if (resetIdentifierInput.isBlank()) {
+                                resetStatusMessage = "Please enter your registered email or @username."
+                                resetIsSuccess = false
+                                return@Button
                             }
-                        }
-                    }
-                    3 -> {
-                        Button(
-                            onClick = {
-                                if (resetNewPasswordInput.length < 6) {
-                                    resetStatusMessage = "New password must be at least 6 characters."
-                                    resetIsSuccess = false
-                                    return@Button
-                                }
-                                if (resetNewPasswordInput != resetConfirmPasswordInput) {
-                                    resetStatusMessage = "Passwords do not match. Please re-enter."
-                                    resetIsSuccess = false
-                                    return@Button
-                                }
-                                isResetLoading = true
-                                resetStatusMessage = ""
-                                coroutineScope.launch {
-                                    val result = viewModel.completeSecurePasswordReset(resetNewPasswordInput)
-                                    isResetLoading = false
-                                    resetStatusMessage = result.second
-                                    resetIsSuccess = result.first
-                                    if (result.first) {
-                                        loginBackHandleInput = resetIdentifierInput.trim()
-                                        loginPasswordInput = resetNewPasswordInput
-                                        authMode = 0
-                                    }
-                                }
-                            },
-                            enabled = !isResetLoading,
-                            colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
-                        ) {
-                            if (isResetLoading) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Updating...")
-                            } else {
-                                Text("Save New Password", fontWeight = FontWeight.Bold)
+                            if (resetNewPasswordInput.length < 6) {
+                                resetStatusMessage = "New password must be at least 6 characters."
+                                resetIsSuccess = false
+                                return@Button
                             }
+                            if (resetNewPasswordInput != resetConfirmPasswordInput) {
+                                resetStatusMessage = "Passwords do not match. Please re-enter."
+                                resetIsSuccess = false
+                                return@Button
+                            }
+                            isResetLoading = true
+                            resetStatusMessage = ""
+                            coroutineScope.launch {
+                                val result = viewModel.resetPasswordDirectly(
+                                    emailOrUsernameInput = resetIdentifierInput.trim(),
+                                    newPasswordInput = resetNewPasswordInput.trim()
+                                )
+                                isResetLoading = false
+                                resetStatusMessage = result.second
+                                resetIsSuccess = result.first
+                                if (result.first) {
+                                    loginBackHandleInput = resetIdentifierInput.trim()
+                                    loginPasswordInput = resetNewPasswordInput.trim()
+                                    authMode = 0
+                                }
+                            }
+                        },
+                        enabled = !isResetLoading,
+                        colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                    ) {
+                        if (isResetLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Updating...")
+                        } else {
+                            Text("Update Password", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1358,7 +1641,7 @@ fun AuthScreen(
                     onClick = { showForgotPasswordDialog = false },
                     enabled = !isResetLoading
                 ) {
-                    Text(if (resetIsSuccess && resetStep == 3) "Done" else "Close")
+                    Text(if (resetIsSuccess) "Close" else "Cancel")
                 }
             }
         )
