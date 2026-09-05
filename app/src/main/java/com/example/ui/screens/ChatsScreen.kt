@@ -30,6 +30,7 @@ import com.example.ui.theme.PulseGreen
 import com.example.ui.theme.VLinkCyan
 import com.example.ui.viewmodels.MainViewModel
 import com.example.ui.viewmodels.NavigationTab
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -40,6 +41,10 @@ fun ChatsScreen(
     onOpenNewChatModal: () -> Unit
 ) {
     val chats by viewModel.chats.collectAsState()
+    val currentUser by viewModel.currentUser.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
+    var verificationNotice by remember { mutableStateOf("") }
+    var isCheckingVerif by remember { mutableStateOf(false) }
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedFilter by viewModel.selectedFilter.collectAsState()
     val worldwideResults by viewModel.worldwideSearchResults.collectAsState()
@@ -236,6 +241,84 @@ fun ChatsScreen(
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            if (currentUser != null && !currentUser!!.emailVerified) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f))
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Email,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Email Address Unverified",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "An official verification link was sent to ${currentUser?.email}. Tap the link in your email to verify.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val res = viewModel.resendVerificationEmail()
+                                        verificationNotice = res.second
+                                    }
+                                },
+                                modifier = Modifier.height(32.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                            ) {
+                                Text("Resend Email", fontSize = 11.sp)
+                            }
+                            Button(
+                                onClick = {
+                                    isCheckingVerif = true
+                                    coroutineScope.launch {
+                                        val res = viewModel.checkEmailVerificationStatus()
+                                        isCheckingVerif = false
+                                        verificationNotice = res.second
+                                    }
+                                },
+                                enabled = !isCheckingVerif,
+                                modifier = Modifier.height(32.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                            ) {
+                                if (isCheckingVerif) {
+                                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = Color.Black)
+                                } else {
+                                    Text("I've Verified", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        if (verificationNotice.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                verificationNotice,
+                                fontSize = 11.sp,
+                                color = if (currentUser?.emailVerified == true) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                 }
             }
 

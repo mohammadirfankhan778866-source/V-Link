@@ -15,7 +15,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 
 enum class NavigationTab {
-    CHATS, UPDATES, POSTS, CHANNELS, CALLS, SETTINGS
+    CHATS, UPDATES, POSTS, CHANNELS, CALLS, BROWSER, SETTINGS
 }
 
 data class TempGoogleUser(
@@ -44,6 +44,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val userId = sessionManager.getCurrentUserId()
             if (userId != null && sessionManager.isLoggedIn.value) {
                 repository.database.userDao().setCurrentUser(userId)
+
+                // Procedure 1.12 & 3.5: Reload auth state from authentication backend on app launch
+                val fbUser = authRepository.getCurrentUser()
+                if (fbUser != null) {
+                    try {
+                        val verifResult = authRepository.reloadUserAndCheckVerified()
+                        if (verifResult.isSuccess && verifResult.getOrNull() == true) {
+                            val user = repository.database.userDao().getUserById(userId)
+                            if (user != null && !user.emailVerified) {
+                                val verifiedUser = user.copy(emailVerified = true)
+                                repository.database.userDao().insertOrUpdateUser(verifiedUser)
+                                sessionManager.saveCustomUserSession(sessionManager.jwtToken.value ?: "vlink_jwt", verifiedUser)
+                                try {
+                                    firestoreService.updateUserVerification(userId, true)
+                                } catch (e: Exception) {
+                                    android.util.Log.w("MainViewModel", "Firestore verif update: ${e.message}")
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("MainViewModel", "Startup auth reload note: ${e.message}")
+                    }
+                }
             }
         }
     }
@@ -92,6 +115,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _activeStatusViewer = MutableStateFlow<StatusStoryEntity?>(null)
     val activeStatusViewer: StateFlow<StatusStoryEntity?> = _activeStatusViewer
+
+    private val geminiSearchService = com.example.data.network.GeminiSearchService()
+
+    private val _browserCurrentUrl = MutableStateFlow("https://www.google.com")
+    val browserCurrentUrl: StateFlow<String> = _browserCurrentUrl
+
+    private val _showBrowserWebView = MutableStateFlow(false)
+    val showBrowserWebView: StateFlow<Boolean> = _showBrowserWebView
+
+    private val _browserNewsItems = MutableStateFlow<List<com.example.data.network.BrowserMediaItem>>(emptyList())
+    val browserNewsItems: StateFlow<List<com.example.data.network.BrowserMediaItem>> = _browserNewsItems
+
+    private val _browserSportsItems = MutableStateFlow<List<com.example.data.network.BrowserMediaItem>>(emptyList())
+    val browserSportsItems: StateFlow<List<com.example.data.network.BrowserMediaItem>> = _browserSportsItems
+
+    private val _browserVideoItems = MutableStateFlow<List<com.example.data.network.BrowserMediaItem>>(emptyList())
+    val browserVideoItems: StateFlow<List<com.example.data.network.BrowserMediaItem>> = _browserVideoItems
+
+    private val _isBrowserMediaLoading = MutableStateFlow(false)
+    val isBrowserMediaLoading: StateFlow<Boolean> = _isBrowserMediaLoading
+
+    private val _browserAiSearchResponse = MutableStateFlow<com.example.data.network.GroundedSearchResponse?>(null)
+    val browserAiSearchResponse: StateFlow<com.example.data.network.GroundedSearchResponse?> = _browserAiSearchResponse
+
+    private val _isBrowserAiSearchLoading = MutableStateFlow(false)
+    val isBrowserAiSearchLoading: StateFlow<Boolean> = _isBrowserAiSearchLoading
+
+    private val _pendingLinkToOpen = MutableStateFlow<String?>(null)
+    val pendingLinkToOpen: StateFlow<String?> = _pendingLinkToOpen
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val chats: StateFlow<List<ChatEntity>> = combine(_searchQuery, _selectedFilter) { q, f -> Pair(q, f) }
@@ -350,10 +402,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         // Start simulation of posts by followed channels
         startSimulatedChannelPosts()
+        // Load initial browser feeds with search grounding
+        refreshBrowserFeeds()
     }
 
     fun selectTab(tab: NavigationTab) {
         _currentTab.value = tab
+    }
+
+    fun promptOpenLink(url: String) {
+        _pendingLinkToOpen.value = url
+    }
+
+    fun dismissOpenLinkDialog() {
+        _pendingLinkToOpen.value = null
+    }
+
+    fun openInAppBrowser(url: String) {
+        val target = if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            "https://$url"
+        } else url
+        _browserCurrentUrl.value = target
+        _showBrowserWebView.value = true
+        _activeChatId.value = null
+        selectTab(NavigationTab.BROWSER)
+    }
+
+    fun navigateToUrlOrSearch(query: String) {
+        val trimmed = query.trim()
+        val finalUrl = when {
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+            trimmed.contains(".") && !trimmed.contains(" ") -> "https://$trimmed"
+            else -> {
+                try {
+                    "https://www.google.com/search?q=" + java.net.URLEncoder.encode(trimmed, "UTF-8")
+                } catch (e: Exception) {
+                    "https://www.google.com/search?q=$trimmed"
+                }
+            }
+        }
+        openInAppBrowser(finalUrl)
+    }
+
+    fun closeBrowserWebView() {
+        _showBrowserWebView.value = false
+    }
+
+    fun refreshBrowserFeeds() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isBrowserMediaLoading.value = true
+            try {
+                _browserNewsItems.value = geminiSearchService.fetchCuratedNews()
+                _browserSportsItems.value = geminiSearchService.fetchCuratedSports()
+                _browserVideoItems.value = geminiSearchService.fetchCuratedVideos()
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Failed to refresh browser feeds: ${e.message}")
+            } finally {
+                _isBrowserMediaLoading.value = false
+            }
+        }
+    }
+
+    fun performAiSearchWithGoogleGrounding(prompt: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isBrowserAiSearchLoading.value = true
+            try {
+                val response = geminiSearchService.searchWithGoogleGrounding(prompt)
+                _browserAiSearchResponse.value = response
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "AI Search grounding failed: ${e.message}")
+            } finally {
+                _isBrowserAiSearchLoading.value = false
+            }
+        }
     }
 
     private var activeChatFirestoreJob: kotlinx.coroutines.Job? = null
@@ -1116,6 +1237,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             try { firestoreService.getUser(targetUserId) } catch (e: Exception) { null }
                         } else null)
 
+                    val isBackendVerified = firebaseUser?.isEmailVerified ?: (userEntity?.emailVerified ?: false)
+
                     if (userEntity == null) {
                         val cleanHandle = "@" + (if (isEmail) cleanEmail.substringBefore("@") else cleanUsername)
                         userEntity = UserEntity(
@@ -1127,7 +1250,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             bio = "Connecting via V-Link ⚡",
                             onlineStatus = "ONLINE",
                             isCurrentUser = true,
-                            emailVerified = true,
+                            emailVerified = isBackendVerified,
                             authProvider = "email"
                         )
                         try {
@@ -1153,8 +1276,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
 
                     repository.database.userDao().clearCurrentUserFlag()
-                    repository.database.userDao().insertOrUpdateUser(userEntity.copy(isCurrentUser = true))
-                    sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", userEntity)
+                    val userWithSession = userEntity.copy(isCurrentUser = true, emailVerified = if (firebaseUser != null) firebaseUser.isEmailVerified else userEntity.emailVerified)
+                    repository.database.userDao().insertOrUpdateUser(userWithSession)
+                    sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", userWithSession)
                     return@withContext Pair(true, "Login successful")
                 } else {
                     return@withContext Pair(false, "Incorrect username/email or password. Please verify your credentials.")
@@ -1166,11 +1290,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var lastPasswordResetTimestamp = 0L
+    private var lastVerificationEmailTimestamp = 0L
+
     suspend fun requestPasswordResetLink(emailOrUsernameInput: String): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
             val input = emailOrUsernameInput.trim()
             if (input.isEmpty()) {
-                return@withContext Pair(false, "Please enter your registered email address or @username.")
+                return@withContext Pair(false, "Please enter your registered email address.")
+            }
+
+            // Security: Rate-limit reset requests (Procedure 5)
+            val now = System.currentTimeMillis()
+            if (now - lastPasswordResetTimestamp < 60_000L) {
+                val remainingSec = ((60_000L - (now - lastPasswordResetTimestamp)) / 1000).coerceAtLeast(1)
+                return@withContext Pair(false, "Please wait ${remainingSec}s before requesting another password reset link.")
             }
 
             val isEmail = android.util.Patterns.EMAIL_ADDRESS.matcher(input).matches() || (input.contains("@") && input.contains(".") && !input.startsWith("@"))
@@ -1178,146 +1312,119 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cleanRawUsername = input.removePrefix("@").lowercase().trim()
             val cleanUsernameWithAt = "@$cleanRawUsername"
 
-            // 1. Check account in Room or Firestore
-            val allCreds = repository.database.accountCredentialDao().getAllCredentials()
-            val localCred = allCreds.find {
-                it.email.equals(cleanEmail, ignoreCase = true) ||
-                it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
-                it.username.equals(cleanUsernameWithAt, ignoreCase = true)
-            }
-
-            val allUsers = repository.database.userDao().getAllUsersOnce()
-            val localUser = allUsers.find {
-                it.email.equals(cleanEmail, ignoreCase = true) ||
-                it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
-                it.username.equals(cleanUsernameWithAt, ignoreCase = true)
-            }
-
-            val firestoreUser = try {
-                if (isEmail) firestoreService.getUserByEmail(cleanEmail)
-                else firestoreService.getUserByUsername(cleanRawUsername)
-            } catch (e: Exception) { null }
-
-            val targetEmail = localCred?.email ?: localUser?.email ?: firestoreUser?.email ?: if (isEmail) cleanEmail else null
-
+            // Look up target email if username was provided
+            var targetEmail = if (isEmail) cleanEmail else null
             if (targetEmail == null) {
-                return@withContext Pair(false, "No registered account found for '$input'. Please check your username or email.")
+                val allCreds = repository.database.accountCredentialDao().getAllCredentials()
+                val localCred = allCreds.find {
+                    it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
+                    it.username.equals(cleanUsernameWithAt, ignoreCase = true)
+                }
+                targetEmail = localCred?.email
+            }
+            if (targetEmail == null) {
+                val allUsers = repository.database.userDao().getAllUsersOnce()
+                val localUser = allUsers.find {
+                    it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
+                    it.username.equals(cleanUsernameWithAt, ignoreCase = true)
+                }
+                targetEmail = localUser?.email
+            }
+            if (targetEmail == null && !isEmail) {
+                try {
+                    val firestoreUser = firestoreService.getUserByUsername(cleanRawUsername)
+                    targetEmail = firestoreUser?.email
+                } catch (e: Exception) { null }
             }
 
-            // Mask email for user privacy and security
-            val atIndex = targetEmail.indexOf('@')
-            val maskedEmail = if (atIndex > 2) {
-                targetEmail.take(1) + "***" + targetEmail.substring(atIndex - 1)
-            } else {
-                "***" + targetEmail.substring(atIndex)
+            val emailToSend = targetEmail ?: cleanEmail
+            if (!android.util.Patterns.EMAIL_ADDRESS.matcher(emailToSend).matches()) {
+                return@withContext Pair(false, "Please enter a valid email address.")
             }
 
-            // Send official Firebase password reset email
-            val firebaseResult = authRepository.sendPasswordResetEmail(targetEmail)
+            lastPasswordResetTimestamp = now
+
+            // Dispatch secure reset email via Firebase Authentication backend over HTTPS (Procedures 4 & 5)
+            val firebaseResult = authRepository.sendPasswordResetEmail(emailToSend)
             
             if (firebaseResult.isSuccess) {
+                // Security requirement: Avoid exposing whether an email belongs to an account
                 return@withContext Pair(
                     true,
-                    "Official password reset link sent to $maskedEmail. Please check your inbox and spam folder, click the link to reset your password, and then sign in."
+                    "If an account with '$input' exists, an official password reset link has been dispatched to its registered email address. Please open the link in your email to securely reset your credentials."
                 )
             } else {
-                val error = firebaseResult.exceptionOrNull()?.message ?: "Firebase email service unavailable"
-                return@withContext Pair(
-                    false,
-                    "Firebase could not dispatch reset email ($error). You can use the Direct Reset option below to update your password immediately."
-                )
+                val error = firebaseResult.exceptionOrNull()?.message ?: "Unable to send reset email. Please verify your connection."
+                return@withContext Pair(false, error)
             }
         }
     }
 
-    suspend fun resetPasswordDirectly(
-        emailOrUsernameInput: String,
-        newPasswordInput: String
-    ): Pair<Boolean, String> {
+    suspend fun resendVerificationEmail(): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
-            val input = emailOrUsernameInput.trim()
-            if (input.isEmpty()) {
-                return@withContext Pair(false, "Please enter your registered email address or @username.")
+            val now = System.currentTimeMillis()
+            if (now - lastVerificationEmailTimestamp < 60_000L) {
+                val waitSec = ((60_000L - (now - lastVerificationEmailTimestamp)) / 1000).coerceAtLeast(1)
+                return@withContext Pair(false, "Please wait ${waitSec}s before requesting another verification email.")
             }
 
-            val newPassword = newPasswordInput.trim()
-            if (newPassword.length < 6) {
-                return@withContext Pair(false, "New password must be at least 6 characters.")
+            val result = authRepository.sendEmailVerification()
+            if (result.isSuccess) {
+                lastVerificationEmailTimestamp = now
+                return@withContext Pair(true, "Verification email dispatched! Please check your inbox and spam folder.")
+            } else {
+                val msg = result.exceptionOrNull()?.message ?: "Unable to send verification email. Please try again later."
+                return@withContext Pair(false, msg)
             }
+        }
+    }
 
-            val isEmail = android.util.Patterns.EMAIL_ADDRESS.matcher(input).matches() || (input.contains("@") && input.contains(".") && !input.startsWith("@"))
-            val cleanEmail = input.lowercase().trim()
-            val cleanRawUsername = input.removePrefix("@").lowercase().trim()
-            val cleanUsernameWithAt = "@$cleanRawUsername"
-
-            // Look up account in Room database
-            val allCreds = repository.database.accountCredentialDao().getAllCredentials()
-            var localCred = allCreds.find {
-                it.email.equals(cleanEmail, ignoreCase = true) ||
-                it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
-                it.username.equals(cleanUsernameWithAt, ignoreCase = true)
+    suspend fun checkEmailVerificationStatus(): Pair<Boolean, String> {
+        return withContext(Dispatchers.IO) {
+            val result = authRepository.reloadUserAndCheckVerified()
+            if (result.isSuccess) {
+                val isVerified = result.getOrNull() == true
+                if (isVerified) {
+                    val user = currentUser.value
+                    if (user != null) {
+                        val updated = user.copy(emailVerified = true)
+                        repository.database.userDao().insertOrUpdateUser(updated)
+                        try {
+                            firestoreService.updateUserVerification(user.id, true)
+                        } catch (e: Exception) {
+                            android.util.Log.w("MainViewModel", "Firestore verification note: ${e.message}")
+                        }
+                        sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", updated)
+                    }
+                    return@withContext Pair(true, "Email has been successfully verified!")
+                } else {
+                    return@withContext Pair(false, "Email is not verified yet. Please tap the verification link in your inbox.")
+                }
+            } else {
+                val msg = result.exceptionOrNull()?.message ?: "Could not verify email status. Check your internet connection."
+                return@withContext Pair(false, msg)
             }
+        }
+    }
 
-            val allUsers = repository.database.userDao().getAllUsersOnce()
-            var localUser = allUsers.find {
-                it.email.equals(cleanEmail, ignoreCase = true) ||
-                it.username.removePrefix("@").equals(cleanRawUsername, ignoreCase = true) ||
-                it.username.equals(cleanUsernameWithAt, ignoreCase = true)
+    suspend fun linkCurrentUserWithGoogle(activityContext: Context): Pair<Boolean, String> {
+        return withContext(Dispatchers.IO) {
+            val result = authRepository.linkCurrentUserWithGoogle(activityContext)
+            if (result.isSuccess) {
+                val user = currentUser.value
+                if (user != null) {
+                    val updated = user.copy(
+                        authProvider = if (user.authProvider.contains("google.com")) user.authProvider else "${user.authProvider}, google.com",
+                        emailVerified = true
+                    )
+                    repository.database.userDao().insertOrUpdateUser(updated)
+                    sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", updated)
+                }
+                return@withContext Pair(true, "Google account successfully linked!")
+            } else {
+                val msg = result.exceptionOrNull()?.message ?: "Could not link Google account."
+                return@withContext Pair(false, msg)
             }
-
-            val firestoreUser = try {
-                if (isEmail) firestoreService.getUserByEmail(cleanEmail)
-                else firestoreService.getUserByUsername(cleanRawUsername)
-            } catch (e: Exception) { null }
-
-            val targetEmail = localCred?.email ?: localUser?.email ?: firestoreUser?.email ?: if (isEmail) cleanEmail else null
-            val targetUserId = localCred?.id ?: localUser?.id ?: firestoreUser?.id
-            val targetUsername = localCred?.username ?: localUser?.username ?: firestoreUser?.username ?: if (!isEmail) cleanUsernameWithAt else "@${targetEmail?.substringBefore("@") ?: "user"}"
-            val targetDisplayName = localCred?.displayName ?: localUser?.displayName ?: firestoreUser?.displayName ?: (targetEmail?.substringBefore("@") ?: "V-Link User")
-
-            if (targetEmail == null && targetUserId == null && !isEmail) {
-                return@withContext Pair(false, "No registered account found matching '$input'. Please check your username or email.")
-            }
-
-            val salt = com.example.util.AuthCryptoUtils.generateSalt()
-            val hash = com.example.util.AuthCryptoUtils.hashPassword(newPassword, salt)
-            val userId = targetUserId ?: "usr_" + java.util.UUID.randomUUID().toString().replace("-", "").take(10)
-
-            // 1. Update in local Room DB
-            val updatedCred = AccountCredentialEntity(
-                id = userId,
-                email = targetEmail ?: cleanEmail,
-                username = targetUsername,
-                passwordHash = hash,
-                passwordSalt = salt,
-                displayName = targetDisplayName,
-                profilePictureUrl = localCred?.profilePictureUrl ?: localUser?.profilePictureUrl ?: "https://picsum.photos/seed/$userId/300/300"
-            )
-            repository.database.accountCredentialDao().insertCredential(updatedCred)
-
-            val updatedUser = (localUser ?: UserEntity(
-                id = userId,
-                displayName = targetDisplayName,
-                username = targetUsername,
-                email = targetEmail ?: cleanEmail,
-                profilePictureUrl = updatedCred.profilePictureUrl,
-                bio = "Connecting via V-Link ⚡",
-                onlineStatus = "ONLINE",
-                isCurrentUser = false,
-                emailVerified = true,
-                authProvider = "email"
-            )).copy(email = targetEmail ?: cleanEmail, username = targetUsername)
-
-            repository.database.userDao().insertOrUpdateUser(updatedUser)
-
-            // 2. Sync to Firestore
-            try {
-                firestoreService.updatePassword(userId, hash, salt)
-            } catch (e: Exception) {
-                android.util.Log.w("MainViewModel", "Firestore update password note: ${e.message}")
-            }
-
-            return@withContext Pair(true, "Password successfully updated for $targetUsername! You can now log in directly.")
         }
     }
 
@@ -1325,7 +1432,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         emailInput: String,
         displayNameInput: String,
         usernameInput: String,
-        passwordInput: String,
+        passwordInput: String = "",
         photoUrlInput: String? = null
     ): Pair<Boolean, String> {
         return withContext(Dispatchers.IO) {
@@ -1341,8 +1448,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (rawUsername.length < 3) {
                 return@withContext Pair(false, "Username must be at least 3 characters.")
             }
-            if (password.length < 6) {
-                return@withContext Pair(false, "Password must be at least 6 characters.")
+            if (password.isNotBlank() && password.length < 6) {
+                return@withContext Pair(false, "Password must be at least 6 characters if provided.")
             }
 
             // Check if username is taken by another user
@@ -1352,7 +1459,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@withContext Pair(false, "The handle $username is already taken. Please choose another username.")
             }
 
-            // Look up existing user by email
+            // Look up existing user by email (Account Linking - Procedure 6)
             var userEntity = repository.database.userDao().getUserByEmail(email)
             if (userEntity == null) {
                 userEntity = try { firestoreService.getUserByEmail(email) } catch (e: Exception) { null }
@@ -1361,22 +1468,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val userId = userEntity?.id ?: "usr_g_" + java.util.UUID.randomUUID().toString().replace("-", "").take(10)
             val photoUrl = photoUrlInput ?: userEntity?.profilePictureUrl ?: "https://picsum.photos/seed/${userId}/300/300"
 
-            val salt = com.example.util.AuthCryptoUtils.generateSalt()
-            val hash = com.example.util.AuthCryptoUtils.hashPassword(password, salt)
+            // 1. If user optionally created a direct password, hash and store credentials
+            if (password.isNotBlank()) {
+                val salt = com.example.util.AuthCryptoUtils.generateSalt()
+                val hash = com.example.util.AuthCryptoUtils.hashPassword(password, salt)
+                val cred = AccountCredentialEntity(
+                    id = userId,
+                    email = email,
+                    username = username,
+                    passwordHash = hash,
+                    passwordSalt = salt,
+                    displayName = displayName,
+                    profilePictureUrl = photoUrl
+                )
+                repository.database.accountCredentialDao().insertCredential(cred)
+                try {
+                    firestoreService.updatePassword(userId, hash, salt)
+                } catch (e: Exception) {
+                    android.util.Log.w("MainViewModel", "Firestore password sync: ${e.message}")
+                }
+            }
 
-            // 1. Save or update credentials in Room
-            val cred = AccountCredentialEntity(
-                id = userId,
-                email = email,
-                username = username,
-                passwordHash = hash,
-                passwordSalt = salt,
-                displayName = displayName,
-                profilePictureUrl = photoUrl
-            )
-            repository.database.accountCredentialDao().insertCredential(cred)
-
-            // 2. Save or update UserEntity
+            // 2. Save or update UserEntity (verified Google identity)
             val updatedUser = UserEntity(
                 id = userId,
                 displayName = displayName,
@@ -1386,8 +1499,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 bio = userEntity?.bio ?: "Connecting via V-Link ⚡",
                 onlineStatus = "ONLINE",
                 isCurrentUser = true,
-                emailVerified = true,
-                authProvider = "google.com"
+                emailVerified = true, // Google identities are verified by Google backend
+                authProvider = if (userEntity != null && userEntity.authProvider.contains("email")) "email, google.com" else "google.com"
             )
             repository.database.userDao().clearCurrentUserFlag()
             repository.database.userDao().insertOrUpdateUser(updatedUser)
@@ -1395,7 +1508,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // 3. Sync to Firestore
             try {
                 firestoreService.registerUser(updatedUser)
-                firestoreService.updatePassword(userId, hash, salt)
             } catch (e: Exception) {
                 android.util.Log.w("MainViewModel", "Firestore sync for Google user: ${e.message}")
             }
@@ -1418,22 +1530,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val fbDisplayName = fbUser.displayName ?: fbEmail.substringBefore("@").ifBlank { "V-Link User" }
                         val fbPhotoUrl = fbUser.photoUrl?.toString() ?: "https://picsum.photos/seed/${fbUid}/300/300"
 
-                        var userEntity = repository.database.userDao().getUserById(fbUid)
-                            ?: repository.database.userDao().getUserByEmail(fbEmail)
-                        if (userEntity == null) {
-                            userEntity = try { firestoreService.getUser(fbUid) ?: firestoreService.getUserByEmail(fbEmail) } catch (e: Exception) { null }
+                        // Procedure 1.8 & 6: Check if account already exists with this email or UID
+                        var existingUser = repository.database.userDao().getUserById(fbUid)
+                            ?: (if (fbEmail.isNotBlank()) repository.database.userDao().getUserByEmail(fbEmail) else null)
+                        if (existingUser == null && fbEmail.isNotBlank()) {
+                            existingUser = try {
+                                firestoreService.getUser(fbUid) ?: firestoreService.getUserByEmail(fbEmail)
+                            } catch (e: Exception) { null }
                         }
 
-                        val localCred = repository.database.accountCredentialDao().getCredentialByEmail(fbEmail)
-                        if (userEntity != null && localCred != null) {
-                            // Already has full setup with username and password
+                        if (existingUser != null) {
+                            // Procedure 1.8 & 6: Account already exists - sign user in and link identities
+                            val linkedUser = existingUser.copy(
+                                isCurrentUser = true,
+                                emailVerified = true,
+                                authProvider = if (existingUser.authProvider.contains("google.com")) existingUser.authProvider else "${existingUser.authProvider}, google.com",
+                                profilePictureUrl = existingUser.profilePictureUrl.ifBlank { fbPhotoUrl }
+                            )
                             repository.database.userDao().clearCurrentUserFlag()
-                            repository.database.userDao().insertOrUpdateUser(userEntity.copy(isCurrentUser = true))
-                            sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", userEntity)
-                            return@withContext Pair(true, "Signed in successfully as ${userEntity.displayName}")
+                            repository.database.userDao().insertOrUpdateUser(linkedUser)
+                            sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", linkedUser)
+                            return@withContext Pair(true, "Signed in successfully as ${linkedUser.displayName}")
                         } else {
-                            // User authenticated with Google but needs to complete Nickname, Username & Password setup
-                            return@withContext Pair(false, "SETUP_REQUIRED:${fbEmail}###${fbDisplayName}###${fbPhotoUrl}")
+                            // Procedure 1.7: First-time sign in with Google - automatically create account using verified identity
+                            val baseUsername = (fbDisplayName.lowercase().replace(" ", "_").filter { it.isLetterOrDigit() || it == '_' }.takeIf { it.length >= 3 }
+                                ?: fbEmail.substringBefore("@").lowercase().filter { it.isLetterOrDigit() || it == '_' }).ifBlank { "user" }
+                            
+                            var candidateHandle = "@$baseUsername"
+                            var counter = 1
+                            while (!checkUsernameAvailable(candidateHandle)) {
+                                candidateHandle = "@${baseUsername}_$counter"
+                                counter++
+                            }
+
+                            val newUser = UserEntity(
+                                id = fbUid,
+                                displayName = fbDisplayName,
+                                username = candidateHandle,
+                                email = fbEmail,
+                                profilePictureUrl = fbPhotoUrl,
+                                bio = "Connecting via V-Link ⚡",
+                                onlineStatus = "ONLINE",
+                                isCurrentUser = true,
+                                emailVerified = true, // Google accounts are email-verified by Google
+                                authProvider = "google.com"
+                            )
+                            repository.database.userDao().clearCurrentUserFlag()
+                            repository.database.userDao().insertOrUpdateUser(newUser)
+                            try {
+                                firestoreService.registerUser(newUser)
+                            } catch (e: Exception) {
+                                android.util.Log.w("MainViewModel", "Firestore register Google user: ${e.message}")
+                            }
+                            sessionManager.saveCustomUserSession("vlink_jwt_${System.currentTimeMillis()}", newUser)
+                            return@withContext Pair(true, "Welcome to V-Link, ${newUser.displayName}!")
                         }
                     } else {
                         return@withContext Pair(false, "NO_CREDENTIALS")
@@ -1756,7 +1906,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     bio = "Connecting via V-Link ⚡",
                     onlineStatus = "ONLINE",
                     isCurrentUser = true,
-                    emailVerified = true,
+                    emailVerified = registeredUser?.isEmailVerified ?: false, // Initially unverified (Procedure 2.5)
                     authProvider = "email"
                 )
 
@@ -1869,6 +2019,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 repository.database.accountCredentialDao().deleteCredential(user.id)
                 repository.database.userDao().updateUserStatus(user.id, "OFFLINE", System.currentTimeMillis())
             }
+            authRepository.logout()
             repository.database.userDao().clearCurrentUserFlag()
             sessionManager.logout()
         }
@@ -1876,6 +2027,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun logout() {
         viewModelScope.launch(Dispatchers.IO) {
+            val user = repository.database.userDao().getCurrentUserOnce()
+            if (user != null) {
+                repository.database.userDao().updateUserStatus(user.id, "OFFLINE", System.currentTimeMillis())
+            }
+            authRepository.logout()
             repository.database.userDao().clearCurrentUserFlag()
             sessionManager.logout()
         }

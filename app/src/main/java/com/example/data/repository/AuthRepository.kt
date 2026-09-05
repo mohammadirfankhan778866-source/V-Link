@@ -61,7 +61,8 @@ class AuthRepository(private val context: Context) {
             Result.success(Unit)
         } catch (e: com.google.firebase.auth.FirebaseAuthInvalidUserException) {
             Log.w("AuthRepository", "No Firebase user found for email: $email")
-            Result.failure(Exception("No account found with email '$email' in authentication records."))
+            // Backend security: generic response handling
+            Result.success(Unit)
         } catch (e: com.google.firebase.auth.FirebaseAuthInvalidCredentialsException) {
             Log.w("AuthRepository", "Invalid email format: $email")
             Result.failure(Exception("The email address is improperly formatted."))
@@ -73,6 +74,79 @@ class AuthRepository(private val context: Context) {
             Result.failure(Exception("Network error. Please check your internet connection."))
         } catch (e: Exception) {
             Log.e("AuthRepository", "Error sending password reset email: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    suspend fun sendEmailVerification(): Result<Unit> {
+        val fbUser = auth?.currentUser ?: return Result.failure(Exception("No user is currently signed in to authentication backend"))
+        return try {
+            fbUser.sendEmailVerification().await()
+            Result.success(Unit)
+        } catch (e: com.google.firebase.FirebaseTooManyRequestsException) {
+            Log.w("AuthRepository", "Too many verification email requests: ${e.message}")
+            Result.failure(Exception("Too many verification email requests. Please wait a moment before trying again."))
+        } catch (e: Exception) {
+            Log.e("AuthRepository", "Error sending verification email: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    suspend fun reloadUserAndCheckVerified(): Result<Boolean> {
+        val fbUser = auth?.currentUser ?: return Result.failure(Exception("No user is currently signed in to authentication backend"))
+        return try {
+            fbUser.reload().await()
+            Result.success(fbUser.isEmailVerified)
+        } catch (e: Exception) {
+            Log.e("AuthRepository", "Error reloading user verification status: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    suspend fun linkCurrentUserWithGoogle(activityContext: Context): Result<AuthResult> {
+        val currentUser = auth?.currentUser ?: return Result.failure(Exception("No user currently signed in to link Google identity"))
+        val fbAuth = auth ?: return Result.failure(Exception("Firebase Authentication is not available"))
+        return try {
+            val hashedNonce = UUID.randomUUID().toString().let {
+                val md = MessageDigest.getInstance("SHA-256")
+                md.update(it.toByteArray())
+                val digest = md.digest()
+                digest.joinToString("") { byte -> "%02x".format(byte) }
+            }
+
+            val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+            val clientId = if (resId != 0) {
+                try { context.getString(resId) } catch (e: Exception) { "303440318642-bdprd7ggohirjtsf3rf4am36mfo3v3pm.apps.googleusercontent.com" }
+            } else {
+                "303440318642-bdprd7ggohirjtsf3rf4am36mfo3v3pm.apps.googleusercontent.com"
+            }
+
+            val googleIdOption: GetGoogleIdOption = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(false)
+                .setServerClientId(clientId)
+                .setNonce(hashedNonce)
+                .build()
+
+            val request: GetCredentialRequest = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build()
+
+            val result: GetCredentialResponse = credentialManager.getCredential(
+                request = request,
+                context = activityContext
+            )
+
+            val credential = result.credential
+            if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                val authCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
+                val linkResult = currentUser.linkWithCredential(authCredential).await()
+                Result.success(linkResult)
+            } else {
+                Result.failure(Exception("Unsupported credential type received from Google."))
+            }
+        } catch (e: Exception) {
+            Log.w("AuthRepository", "Link with Google exception: ${e.message}")
             Result.failure(e)
         }
     }

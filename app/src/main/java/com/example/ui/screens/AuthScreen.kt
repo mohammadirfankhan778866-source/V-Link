@@ -1262,12 +1262,12 @@ fun AuthScreen(
                         }
                     }
 
-                    // Account Password (for direct email/username & password login)
+                    // Account Password (optional for direct email/username & password login)
                     OutlinedTextField(
                         value = googlePasswordInput,
                         onValueChange = { googlePasswordInput = it },
-                        label = { Text("Account Password (min 6 chars)") },
-                        placeholder = { Text("Create password for direct login") },
+                        label = { Text("Direct Login Password (Optional)") },
+                        placeholder = { Text("Leave blank or set min 6 chars") },
                         leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
                         trailingIcon = {
                             IconButton(onClick = { googlePasswordVisible = !googlePasswordVisible }) {
@@ -1297,7 +1297,7 @@ fun AuthScreen(
                             Icon(Icons.Default.Info, contentDescription = null, tint = VLinkCyan, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Setting this password enables you to log in anytime directly with your Google email or @handle on the Login screen!",
+                                text = "Your Google account is verified automatically. Setting an optional password lets you also sign in using email/password.",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 lineHeight = 15.sp
@@ -1348,8 +1348,8 @@ fun AuthScreen(
                             googleSetupErrorMessage = "Username must be at least 3 characters."
                             return@Button
                         }
-                        if (password.length < 6) {
-                            googleSetupErrorMessage = "Password must be at least 6 characters."
+                        if (password.isNotEmpty() && password.length < 6) {
+                            googleSetupErrorMessage = "Password must be at least 6 characters if provided."
                             return@Button
                         }
 
@@ -1415,30 +1415,12 @@ fun AuthScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Method Selector Tabs
-                    TabRow(
-                        selectedTabIndex = resetTab,
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        contentColor = VLinkCyan,
-                        modifier = Modifier.clip(RoundedCornerShape(12.dp))
-                    ) {
-                        Tab(
-                            selected = resetTab == 0,
-                            onClick = { 
-                                resetTab = 0 
-                                resetStatusMessage = ""
-                            },
-                            text = { Text("Email Reset Link", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                        )
-                        Tab(
-                            selected = resetTab == 1,
-                            onClick = { 
-                                resetTab = 1 
-                                resetStatusMessage = ""
-                            },
-                            text = { Text("Direct Reset", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                        )
-                    }
+                    Text(
+                        text = "Enter your registered email address or @username. We will dispatch an official password reset link from our secure authentication backend.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 18.sp
+                    )
 
                     // Account Identifier Input
                     OutlinedTextField(
@@ -1449,74 +1431,18 @@ fun AuthScreen(
                         },
                         label = { Text("Registered Email or @username") },
                         placeholder = { Text("e.g. name@domain.com or @irfan") },
-                        leadingIcon = { Icon(Icons.Default.AccountCircle, contentDescription = null, tint = VLinkCyan) },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = VLinkCyan) },
                         singleLine = true,
                         enabled = !isResetLoading,
                         modifier = Modifier.fillMaxWidth().testTag("reset_identifier_input")
                     )
 
-                    if (resetTab == 0) {
-                        Text(
-                            text = "An official password reset link will be sent to the registered email address associated with this account. Check your inbox and spam folder to set your new password.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 17.sp
-                        )
-                    } else {
-                        // Direct Reset Mode
-                        Text(
-                            text = "Set a new password directly for your account. You can immediately log in after updating.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 17.sp
-                        )
-
-                        OutlinedTextField(
-                            value = resetNewPasswordInput,
-                            onValueChange = {
-                                resetNewPasswordInput = it
-                                resetStatusMessage = ""
-                            },
-                            label = { Text("New Password (min 6 chars)") },
-                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = VLinkCyan) },
-                            trailingIcon = {
-                                IconButton(onClick = { resetNewPasswordVisible = !resetNewPasswordVisible }) {
-                                    Icon(
-                                        imageVector = if (resetNewPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            },
-                            visualTransformation = if (resetNewPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            singleLine = true,
-                            enabled = !isResetLoading,
-                            modifier = Modifier.fillMaxWidth().testTag("reset_new_password_input")
-                        )
-
-                        OutlinedTextField(
-                            value = resetConfirmPasswordInput,
-                            onValueChange = {
-                                resetConfirmPasswordInput = it
-                                resetStatusMessage = ""
-                            },
-                            label = { Text("Confirm New Password") },
-                            leadingIcon = { Icon(Icons.Default.LockClock, contentDescription = null, tint = VLinkCyan) },
-                            trailingIcon = {
-                                IconButton(onClick = { resetConfirmPasswordVisible = !resetConfirmPasswordVisible }) {
-                                    Icon(
-                                        imageVector = if (resetConfirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            },
-                            visualTransformation = if (resetConfirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            singleLine = true,
-                            enabled = !isResetLoading,
-                            modifier = Modifier.fillMaxWidth().testTag("reset_confirm_password_input")
-                        )
-                    }
+                    Text(
+                        text = "For security, password resets are processed securely via email links over HTTPS and expire automatically.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        lineHeight = 15.sp
+                    )
 
                     // Status / Error / Success message
                     if (resetStatusMessage.isNotEmpty()) {
@@ -1553,14 +1479,13 @@ fun AuthScreen(
                         onClick = {
                             showForgotPasswordDialog = false
                             loginBackHandleInput = resetIdentifierInput.trim()
-                            loginPasswordInput = resetNewPasswordInput.trim()
                             authMode = 0
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
                     ) {
-                        Text("Log In Now", fontWeight = FontWeight.Bold)
+                        Text("Done", fontWeight = FontWeight.Bold)
                     }
-                } else if (resetTab == 0) {
+                } else {
                     Button(
                         onClick = {
                             if (resetIdentifierInput.isBlank()) {
@@ -1585,53 +1510,7 @@ fun AuthScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Sending Email...")
                         } else {
-                            Text("Send Reset Email", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                } else {
-                    Button(
-                        onClick = {
-                            if (resetIdentifierInput.isBlank()) {
-                                resetStatusMessage = "Please enter your registered email or @username."
-                                resetIsSuccess = false
-                                return@Button
-                            }
-                            if (resetNewPasswordInput.length < 6) {
-                                resetStatusMessage = "New password must be at least 6 characters."
-                                resetIsSuccess = false
-                                return@Button
-                            }
-                            if (resetNewPasswordInput != resetConfirmPasswordInput) {
-                                resetStatusMessage = "Passwords do not match. Please re-enter."
-                                resetIsSuccess = false
-                                return@Button
-                            }
-                            isResetLoading = true
-                            resetStatusMessage = ""
-                            coroutineScope.launch {
-                                val result = viewModel.resetPasswordDirectly(
-                                    emailOrUsernameInput = resetIdentifierInput.trim(),
-                                    newPasswordInput = resetNewPasswordInput.trim()
-                                )
-                                isResetLoading = false
-                                resetStatusMessage = result.second
-                                resetIsSuccess = result.first
-                                if (result.first) {
-                                    loginBackHandleInput = resetIdentifierInput.trim()
-                                    loginPasswordInput = resetNewPasswordInput.trim()
-                                    authMode = 0
-                                }
-                            }
-                        },
-                        enabled = !isResetLoading,
-                        colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
-                    ) {
-                        if (isResetLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Updating...")
-                        } else {
-                            Text("Update Password", fontWeight = FontWeight.Bold)
+                            Text("Send Reset Link", fontWeight = FontWeight.Bold)
                         }
                     }
                 }

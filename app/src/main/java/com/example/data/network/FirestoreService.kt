@@ -230,6 +230,22 @@ class FirestoreService {
         }
     }
 
+    suspend fun updateUserVerification(userId: String, verified: Boolean): Boolean {
+        val db = firestore ?: return true
+        return try {
+            db.collection("users").document(userId).update(
+                mapOf(
+                    "emailVerified" to verified,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+            ).await()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating user verification in Firestore: ${e.message}")
+            false
+        }
+    }
+
     suspend fun getUser(userId: String): UserEntity? {
         val db = firestore ?: return null
         return try {

@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
@@ -27,13 +28,16 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
@@ -46,6 +50,7 @@ import com.example.ui.components.DeleteMessageConfirmationDialog
 import com.example.ui.components.EmojiPickerPopup
 import com.example.ui.components.LiveRecordingSoundWave
 import com.example.ui.components.MessageStatusTicks
+import com.example.ui.components.OpenLinkDialog
 import com.example.ui.components.PulseAvatar
 import com.example.ui.components.SharedMediaGalleryBottomSheet
 import com.example.ui.components.SonarPulseRipple
@@ -92,6 +97,7 @@ fun ChatDetailScreen(
     var isRecordingVoiceNote by remember { mutableStateOf(false) }
     var showChatInfoSheet by remember { mutableStateOf(false) }
     var showMediaGallerySheet by remember { mutableStateOf(false) }
+    val pendingLinkToOpen by viewModel.pendingLinkToOpen.collectAsState()
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -597,7 +603,8 @@ fun ChatDetailScreen(
                             showExactTimestamps = showExactTimestamps,
                             onMessageLongClick = { msg -> showMsgOptionsForMsg = msg },
                             onReactionClick = { msg -> showReactionDetailsForMsg = msg },
-                            onReplySwipe = { msg -> viewModel.setReplyingMessage(msg) }
+                            onReplySwipe = { msg -> viewModel.setReplyingMessage(msg) },
+                            onLinkClick = { url -> viewModel.promptOpenLink(url) }
                         )
                     }
 
@@ -1024,6 +1031,10 @@ fun ChatDetailScreen(
                                     viewModel.sendMessage(chatId, "Voice note (0:15)", MessageType.VOICE_NOTE, "audio.mp3")
                                     showAttachmentSheet = false
                                 }
+                                AttachmentOptionItem("Web Link", Icons.Default.Language, Color(0xFF00B0FF)) {
+                                    viewModel.sendMessage(chatId, "Check this sports and news update: https://www.espn.com")
+                                    showAttachmentSheet = false
+                                }
                                 AttachmentOptionItem("Location", Icons.Default.LocationOn, Color(0xFF10B981)) {
                                     viewModel.sendMessage(chatId, "📍 Live Location: San Francisco, CA")
                                     showAttachmentSheet = false
@@ -1370,6 +1381,17 @@ fun ChatDetailScreen(
                         TextButton(onClick = { showReactionDetailsForMsg = null }) {
                             Text("Close")
                         }
+                    }
+                )
+            }
+
+            // Open Link Dialog (Option 1: Open in browser, Option 2: Open in app)
+            pendingLinkToOpen?.let { linkUrl ->
+                OpenLinkDialog(
+                    url = linkUrl,
+                    onDismiss = { viewModel.dismissOpenLinkDialog() },
+                    onOpenInApp = { url ->
+                        viewModel.openInAppBrowser(url)
                     }
                 )
             }
@@ -1834,7 +1856,8 @@ fun MessageBubbleRow(
     currentUserId: String,
     showExactTimestamps: Boolean = true,
     onLongClick: () -> Unit,
-    onReactionClick: () -> Unit
+    onReactionClick: () -> Unit,
+    onLinkClick: (String) -> Unit = {}
 ) {
     val bubbleColor = if (isOutgoing) {
         if (isSystemInDarkTheme()) DarkOutgoingBubble else LightOutgoingBubble
@@ -1947,11 +1970,10 @@ fun MessageBubbleRow(
 
                     // Text Message Body
                     if (message.type == MessageType.TEXT.name || message.type == MessageType.IMAGE.name) {
-                        Text(
+                        HighlightedMessageText(
                             text = message.content,
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            lineHeight = 18.sp
+                            keyword = "",
+                            onLinkClick = onLinkClick
                         )
                     }
 
@@ -2076,7 +2098,8 @@ fun GroupedMessageBubbleRow(
     showExactTimestamps: Boolean = true,
     onMessageLongClick: (MessageEntity) -> Unit,
     onReactionClick: (MessageEntity) -> Unit,
-    onReplySwipe: (MessageEntity) -> Unit = {}
+    onReplySwipe: (MessageEntity) -> Unit = {},
+    onLinkClick: (String) -> Unit = {}
 ) {
     val isOutgoing = group.isOutgoing
     val bubbleColor = if (isOutgoing) {
@@ -2311,11 +2334,12 @@ fun GroupedMessageBubbleRow(
                                 Spacer(modifier = Modifier.height(4.dp))
                             }
 
-                            // Text Message Body (with search highlighting)
+                            // Text Message Body (with search highlighting and link interception)
                             if (message.type == MessageType.TEXT.name || (message.type == MessageType.IMAGE.name && message.content.isNotBlank() && message.content != "Camera Photo")) {
                                 HighlightedMessageText(
                                     text = message.content,
-                                    keyword = searchKeyword
+                                    keyword = searchKeyword,
+                                    onLinkClick = onLinkClick
                                 )
                             }
 
@@ -2384,57 +2408,135 @@ fun GroupedMessageBubbleRow(
 @Composable
 fun HighlightedMessageText(
     text: String,
-    keyword: String
+    keyword: String,
+    onLinkClick: ((String) -> Unit)? = null
 ) {
-    if (keyword.isBlank() || !text.contains(keyword, ignoreCase = true)) {
-        Text(
-            text = text,
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            lineHeight = 18.sp
-        )
-        return
+    val urlRegex = remember {
+        Regex("""(https?://[^\s]+|www\.[^\s]+|[a-zA-Z0-9.-]+\.(?:com|org|net|edu|gov|io|ai|co|app|dev|me|in|uk|tech|info)[^\s]*)""", RegexOption.IGNORE_CASE)
+    }
+
+    val detectedLinks = remember(text) {
+        urlRegex.findAll(text).map { it.value }.distinct().toList()
     }
 
     val annotatedString = remember(text, keyword) {
         buildAnnotatedString {
-            var startIndex = 0
-            val lowerText = text.lowercase(Locale.getDefault())
-            val lowerKeyword = keyword.lowercase(Locale.getDefault())
-            val keywordLength = keyword.length
+            append(text)
 
-            while (startIndex < text.length) {
-                val matchIndex = lowerText.indexOf(lowerKeyword, startIndex)
-                if (matchIndex == -1) {
-                    append(text.substring(startIndex))
-                    break
-                }
-
-                if (matchIndex > startIndex) {
-                    append(text.substring(startIndex, matchIndex))
-                }
-
-                withStyle(
-                    style = SpanStyle(
-                        background = Color(0xFFFFD54F),
-                        color = Color.Black,
-                        fontWeight = FontWeight.Bold
+            // Keyword highlighting if searching
+            if (keyword.isNotBlank() && text.contains(keyword, ignoreCase = true)) {
+                val lowerText = text.lowercase(Locale.getDefault())
+                val lowerKeyword = keyword.lowercase(Locale.getDefault())
+                var startIndex = 0
+                while (startIndex < text.length) {
+                    val matchIndex = lowerText.indexOf(lowerKeyword, startIndex)
+                    if (matchIndex == -1) break
+                    addStyle(
+                        style = SpanStyle(
+                            background = Color(0xFFFFD54F),
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        start = matchIndex,
+                        end = matchIndex + keyword.length
                     )
-                ) {
-                    append(text.substring(matchIndex, matchIndex + keywordLength))
+                    startIndex = matchIndex + keyword.length
                 }
+            }
 
-                startIndex = matchIndex + keywordLength
+            // URL highlighting and clickable span annotation
+            urlRegex.findAll(text).forEach { matchResult ->
+                val start = matchResult.range.first
+                val end = matchResult.range.last + 1
+                val url = matchResult.value
+                addStyle(
+                    style = SpanStyle(
+                        color = VLinkCyan,
+                        textDecoration = TextDecoration.Underline,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    start = start,
+                    end = end
+                )
+                addStringAnnotation(
+                    tag = "URL",
+                    annotation = url,
+                    start = start,
+                    end = end
+                )
             }
         }
     }
 
-    Text(
-        text = annotatedString,
-        fontSize = 14.sp,
-        color = MaterialTheme.colorScheme.onSurface,
-        lineHeight = 18.sp
-    )
+    Column {
+        if (detectedLinks.isNotEmpty()) {
+            ClickableText(
+                text = annotatedString,
+                style = TextStyle(
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 18.sp
+                ),
+                onClick = { offset ->
+                    val annotations = annotatedString.getStringAnnotations(tag = "URL", start = offset, end = offset)
+                    if (annotations.isNotEmpty()) {
+                        onLinkClick?.invoke(annotations.first().item)
+                    }
+                }
+            )
+
+            // Detected Link Card
+            Spacer(modifier = Modifier.height(4.dp))
+            detectedLinks.forEach { link ->
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, VLinkCyan.copy(alpha = 0.35f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onLinkClick?.invoke(link) }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Public,
+                            contentDescription = "Link",
+                            tint = VLinkCyan,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = link,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = VLinkCyan,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
+            }
+        } else {
+            Text(
+                text = annotatedString,
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                lineHeight = 18.sp
+            )
+        }
+    }
 }
 
 data class UIMessageReaction(

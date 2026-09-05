@@ -30,6 +30,7 @@ import com.example.util.MediaUtils
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import com.example.ui.components.PulseAvatar
 import com.example.ui.components.RealtimeConnectivityBadge
 import com.example.ui.theme.AppThemeMode
@@ -620,22 +621,160 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 ) {
                     Text("ACCOUNT & SECURITY", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PulseGreen)
 
+                    // Email & Verification Status
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Email, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Outlined.Email, contentDescription = null, modifier = Modifier.size(20.dp), tint = VLinkCyan)
                         Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("Google Account", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Registered Email", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                if (currentUser?.emailVerified == true) {
+                                    Surface(
+                                        color = Color(0xFF1B5E20).copy(alpha = 0.2f),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.Verified, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(12.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Verified", fontSize = 10.sp, color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                } else {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            "Unverified",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
                             Text(currentUser?.email ?: "mohammadirfankhan778866@gmail.com", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    // Email verification actions if unverified
+                    var verificationNotice by remember { mutableStateOf("") }
+                    var isCheckingVerification by remember { mutableStateOf(false) }
+                    val context = LocalContext.current
+                    val coroutineScope = rememberCoroutineScope()
+
+                    if (currentUser?.emailVerified != true) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    "Your email is unverified. Click below to verify via official backend link.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                val res = viewModel.resendVerificationEmail()
+                                                verificationNotice = res.second
+                                            }
+                                        },
+                                        modifier = Modifier.height(34.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("Resend Link", fontSize = 11.sp)
+                                    }
+                                    Button(
+                                        onClick = {
+                                            isCheckingVerification = true
+                                            coroutineScope.launch {
+                                                val res = viewModel.checkEmailVerificationStatus()
+                                                isCheckingVerification = false
+                                                verificationNotice = res.second
+                                            }
+                                        },
+                                        enabled = !isCheckingVerification,
+                                        modifier = Modifier.height(34.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = VLinkCyan, contentColor = Color.Black)
+                                    ) {
+                                        if (isCheckingVerification) {
+                                            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = Color.Black)
+                                        } else {
+                                            Text("Check Verification", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                                if (verificationNotice.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = verificationNotice,
+                                        fontSize = 11.sp,
+                                        color = if (currentUser?.emailVerified == true) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    // Auth Providers & Account Linking
+                    val isGoogleLinked = currentUser?.authProvider?.contains("google.com") == true
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_google_logo),
+                                contentDescription = "Google",
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("Google Account", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(
+                                    if (isGoogleLinked) "Connected & Linked" else "Not Linked",
+                                    fontSize = 12.sp,
+                                    color = if (isGoogleLinked) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        if (!isGoogleLinked) {
+                            OutlinedButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val res = viewModel.linkCurrentUserWithGoogle(context)
+                                        verificationNotice = res.second
+                                    }
+                                },
+                                modifier = Modifier.height(32.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                            ) {
+                                Text("Link Google", fontSize = 11.sp)
+                            }
                         }
                     }
 
                     HorizontalDivider()
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(20.dp), tint = VLinkCyan)
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text("JWT Token Session", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Secure Session", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Text(jwtToken?.take(28) + "...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }

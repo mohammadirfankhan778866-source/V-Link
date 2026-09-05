@@ -25,6 +25,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val isCallActiveScreenOpen by viewModel.isCallActiveScreenOpen.collectAsState()
     val activeCall by viewModel.activeCall.collectAsState()
     val isAdminDashboardOpen by viewModel.isAdminDashboardOpen.collectAsState()
+    val pendingLinkToOpen by viewModel.pendingLinkToOpen.collectAsState()
 
     var showNewChatModal by remember { mutableStateOf(false) }
 
@@ -70,6 +71,12 @@ fun MainScreen(viewModel: MainViewModel) {
                             unselectedIcon = Icons.Outlined.RssFeed
                         ),
                         NavigationTabItemData(
+                            tab = NavigationTab.BROWSER,
+                            label = "Browser",
+                            selectedIcon = Icons.Default.Language,
+                            unselectedIcon = Icons.Outlined.Language
+                        ),
+                        NavigationTabItemData(
                             tab = NavigationTab.CALLS,
                             label = "Calls",
                             selectedIcon = Icons.Default.Call,
@@ -78,8 +85,8 @@ fun MainScreen(viewModel: MainViewModel) {
                         NavigationTabItemData(
                             tab = NavigationTab.CHANNELS,
                             label = "Channels",
-                            selectedIcon = Icons.Default.Language,
-                            unselectedIcon = Icons.Outlined.Language
+                            selectedIcon = Icons.Default.Hub,
+                            unselectedIcon = Icons.Outlined.Hub
                         )
                     )
                 )
@@ -97,6 +104,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     )
                     NavigationTab.UPDATES -> StatusScreen(viewModel = viewModel)
                     NavigationTab.POSTS -> PostsScreen(viewModel = viewModel)
+                    NavigationTab.BROWSER -> BrowserScreen(viewModel = viewModel)
                     NavigationTab.CALLS -> CallsScreen(viewModel = viewModel)
                     NavigationTab.CHANNELS -> ChannelsScreen(viewModel = viewModel)
                     NavigationTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
@@ -126,6 +134,17 @@ fun MainScreen(viewModel: MainViewModel) {
     if (isAdminDashboardOpen) {
         AdminDashboardSheet(
             onDismiss = { viewModel.toggleAdminDashboard(false) }
+        )
+    }
+
+    // 2-Option Link Click Interception Dialog
+    pendingLinkToOpen?.let { urlToOpen ->
+        com.example.ui.components.OpenLinkDialog(
+            url = urlToOpen,
+            onDismiss = { viewModel.dismissOpenLinkDialog() },
+            onOpenInApp = { url ->
+                viewModel.openInAppBrowser(url)
+            }
         )
     }
 }
